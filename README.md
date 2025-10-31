@@ -465,12 +465,6 @@ Scenario:
 
 ## 📚 Documentation
 
-### Core Documentation
-
-- **[START_HERE.md](START_HERE.md)** - Quick start guide
-- **[QUICK_START.md](QUICK_START.md)** - Detailed setup
-- **[PROJECT_SUMMARY.md](PROJECT_SUMMARY.md)** - Project overview
-
 ### Feature Documentation
 
 - **[FARMER_VERIFICATION.md](FARMER_VERIFICATION.md)** - Verification system
