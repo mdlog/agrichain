@@ -28,8 +28,13 @@
 - [Smart Contract](#-smart-contract)
 - [Global Coverage](#-global-coverage)
 - [Use Cases](#-use-cases)
-- [Documentation](#-documentation)
+- [Testing](#-testing)
+- [Security](#-security)
+- [Roadmap](#-roadmap)
 - [Contributing](#-contributing)
+- [License](#-license)
+- [Acknowledgments](#-acknowledgments)
+- [Contact & Support](#-contact--support)
 
 ---
 
