@@ -18,7 +18,9 @@
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 [![Live Demo](https://img.shields.io/badge/Demo-Live-success)](https://agrichains.xyz)
 
-### 📜 [View Certification](https://drive.google.com/file/d/1qwAF367SYiK83qeWX8jjWTv19UOvVAjX/view?usp=sharing)
+### 📜 Certification
+
+**View Certificate:** https://drive.google.com/file/d/1qwAF367SYiK83qeWX8jjWTv19UOvVAjX/view?usp=sharing
 
 ---
 
