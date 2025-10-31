@@ -463,29 +463,6 @@ Scenario:
 
 ---
 
-## 📚 Documentation
-
-### Feature Documentation
-
-- **[FARMER_VERIFICATION.md](FARMER_VERIFICATION.md)** - Verification system
-- **[VERIFICATION_LEVEL_AUTO_UPDATE.md](VERIFICATION_LEVEL_AUTO_UPDATE.md)** - Auto-update feature
-- **[GLOBAL_PLATFORM_UPDATE.md](GLOBAL_PLATFORM_UPDATE.md)** - Global coverage
-- **[RESPONSIVE_DESIGN_UPDATE.md](RESPONSIVE_DESIGN_UPDATE.md)** - Mobile support
-
-### Technical Documentation
-
-- **[HBAR_FORMAT_STANDARDIZATION.md](HBAR_FORMAT_STANDARDIZATION.md)** - HBAR handling
-- **[INTEREST_RATE_FIX.md](INTEREST_RATE_FIX.md)** - Interest rate system
-- **[WALLET_ADDRESS_VERIFICATION.md](WALLET_ADDRESS_VERIFICATION.md)** - Address handling
-- **[ON_CHAIN_VERIFICATION_GUIDE.md](ON_CHAIN_VERIFICATION_GUIDE.md)** - Blockchain integration
-
-### Bahasa Indonesia
-
-- **[PANDUAN_PLATFORM_GLOBAL.md](PANDUAN_PLATFORM_GLOBAL.md)** - Platform global
-- **[PANDUAN_UPDATE_LEVEL_OTOMATIS.md](PANDUAN_UPDATE_LEVEL_OTOMATIS.md)** - Auto-update
-- **[PANDUAN_RESPONSIVE_DESIGN.md](PANDUAN_RESPONSIVE_DESIGN.md)** - Responsive design
-- **[PERBAIKAN_INTEREST_RATE.md](PERBAIKAN_INTEREST_RATE.md)** - Interest rate fix
-
 ---
 
 ## 🧪 Testing
@@ -534,25 +511,6 @@ All transactions can be verified on:
 ```
 https://hashscan.io/testnet
 ```
-
----
-
-## 🎨 Screenshots
-
-### Homepage
-![Homepage](docs/screenshots/homepage.png)
-
-### Farmer Dashboard
-![Farmer Dashboard](docs/screenshots/farmer-dashboard.png)
-
-### Marketplace
-![Marketplace](docs/screenshots/marketplace.png)
-
-### Investor Portfolio
-![Investor Portfolio](docs/screenshots/investor-portfolio.png)
-
-### Admin Panel
-![Admin Panel](docs/screenshots/admin-panel.png)
 
 ---
 
@@ -671,23 +629,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 - 💬 **Discord**: [Join our community](https://discord.gg/agrichain)
 - 📱 **Telegram**: [AgriChain Group](https://t.me/agrichain)
-
----
-
-## 🌟 Star History
-
-If you find this project useful, please consider giving it a ⭐!
-
-[![Star History Chart](https://api.star-history.com/svg?repos=yourusername/agrichain-finance&type=Date)](https://star-history.com/#yourusername/agrichain-finance&Date)
-
----
-
-## 📊 Stats
-
-![GitHub stars](https://img.shields.io/github/stars/yourusername/agrichain-finance?style=social)
-![GitHub forks](https://img.shields.io/github/forks/yourusername/agrichain-finance?style=social)
-![GitHub issues](https://img.shields.io/github/issues/yourusername/agrichain-finance)
-![GitHub pull requests](https://img.shields.io/github/issues-pr/yourusername/agrichain-finance)
 
 ---
 
