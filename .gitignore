@@ -1,0 +1,25 @@
+node_modules/
+.env
+.env.local
+cache/
+artifacts/
+coverage/
+typechain-types/
+dist/
+build/
+
+# Frontend
+frontend/.next/
+frontend/out/
+frontend/node_modules/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db

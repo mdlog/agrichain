@@ -1,0 +1,29 @@
+{
+  "name": "agrichain-finance",
+  "version": "1.0.0",
+  "description": "Decentralized Agricultural Financing Platform on Hedera",
+  "scripts": {
+    "compile": "npx hardhat compile",
+    "test": "npx hardhat test",
+    "deploy:testnet": "npx hardhat run scripts/deploy.js --network testnet",
+    "dev": "cd frontend && npm run dev"
+  },
+  "keywords": [
+    "hedera",
+    "defi",
+    "agriculture",
+    "rwa",
+    "tokenization"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "@hashgraph/sdk": "^2.76.0",
+    "@nomicfoundation/hardhat-toolbox": "^4.0.0",
+    "dotenv": "^16.3.1",
+    "hardhat": "^2.19.0"
+  },
+  "dependencies": {
+    "@openzeppelin/contracts": "^5.0.0"
+  }
+}
