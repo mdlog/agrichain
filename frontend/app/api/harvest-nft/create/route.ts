@@ -5,6 +5,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createHarvestNFT } from '@/lib/harvestNFT'
+import { saveNFT } from '@/lib/nftDatabase'
 import { ethers } from 'ethers'
 
 // Import contract ABIs
@@ -126,12 +127,63 @@ export async function POST(request: NextRequest) {
         console.log('✅ NFT Registered in contract')
         console.log('Transaction:', receipt.hash)
 
+        // Extract internal ID from event
+        let internalId = null
+        try {
+            const registeredEvent = receipt.logs.find((log: any) => {
+                try {
+                    const parsed = harvestNFTContract.interface.parseLog(log)
+                    return parsed && parsed.name === 'HarvestNFTRegistered'
+                } catch {
+                    return false
+                }
+            })
+
+            if (registeredEvent) {
+                const parsedEvent = harvestNFTContract.interface.parseLog(registeredEvent)
+                if (parsedEvent) {
+                    internalId = parsedEvent.args[0].toString() // First arg is internalId
+                    console.log('✅ Internal ID:', internalId)
+                }
+            }
+        } catch (error) {
+            console.warn('Could not extract internal ID from event:', error)
+        }
+
+        // STEP 3: Save to database for online access
+        console.log('💾 Saving NFT to database...')
+
+        const nftRecord = {
+            id: `${nft.tokenId}-${nft.serialNumber}`,
+            tokenId: nft.tokenId,
+            serialNumber: nft.serialNumber,
+            internalId: internalId ? parseInt(internalId) : null,
+            farmerAddress: body.farmerAddress,
+            farmerName: body.farmerName,
+            metadata: {
+                cropType: body.cropType,
+                expectedYield: body.expectedYield,
+                estimatedValue: body.estimatedValue,
+                harvestDate: body.harvestDate,
+                farmLocation: body.farmLocation,
+                farmSize: body.farmSize,
+                isActive: true
+            },
+            createdAt: new Date().toISOString(),
+            explorerUrl: nft.explorerUrl,
+            contractTx: receipt.hash
+        }
+
+        saveNFT(nftRecord)
+        console.log('✅ NFT saved to database')
+
         // Return success response
         return NextResponse.json({
             success: true,
             data: {
                 tokenId: nft.tokenId,
                 serialNumber: nft.serialNumber,
+                internalId: internalId,
                 metadata: nft.metadata,
                 explorerUrl: nft.explorerUrl,
                 contractTx: receipt.hash

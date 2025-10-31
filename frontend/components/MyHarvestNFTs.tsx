@@ -14,6 +14,14 @@ export default function MyHarvestNFTs({ farmerAddress, onCreateLoan }: MyHarvest
     const [nfts, setNfts] = useState<any[]>([])
     const [isLoading, setIsLoading] = useState(true)
 
+    // Debug: Check if onCreateLoan prop exists
+    useEffect(() => {
+        console.log('🟢 MyHarvestNFTs mounted')
+        console.log('🟢 onCreateLoan prop:', onCreateLoan)
+        console.log('🟢 onCreateLoan type:', typeof onCreateLoan)
+        console.log('🟢 onCreateLoan exists:', !!onCreateLoan)
+    }, [])
+
     useEffect(() => {
         loadNFTs()
     }, [farmerAddress])
@@ -21,23 +29,47 @@ export default function MyHarvestNFTs({ farmerAddress, onCreateLoan }: MyHarvest
     const loadNFTs = async () => {
         setIsLoading(true)
         try {
-            // TODO: Implement API to fetch farmer's NFTs from contract
-            // For now, we'll use localStorage as a temporary solution
+            // Fetch from online database
+            const response = await fetch(`/api/nfts?farmer=${farmerAddress}`)
+            const result = await response.json()
+
+            if (result.success && result.data) {
+                setNfts(result.data)
+
+                // Also sync to localStorage for offline access
+                localStorage.setItem(`nfts_${farmerAddress}`, JSON.stringify(result.data))
+            } else {
+                // Fallback to localStorage if API fails
+                const storedNFTs = localStorage.getItem(`nfts_${farmerAddress}`)
+                if (storedNFTs) {
+                    setNfts(JSON.parse(storedNFTs))
+                }
+            }
+        } catch (error) {
+            console.error('Error loading NFTs:', error)
+
+            // Fallback to localStorage on error
             const storedNFTs = localStorage.getItem(`nfts_${farmerAddress}`)
             if (storedNFTs) {
                 setNfts(JSON.parse(storedNFTs))
             }
-        } catch (error) {
-            console.error('Error loading NFTs:', error)
         } finally {
             setIsLoading(false)
         }
     }
 
     const handleCreateLoan = (nft: any) => {
+        console.log('🔵 MyHarvestNFTs - handleCreateLoan called with NFT:', nft)
         if (onCreateLoan) {
-            onCreateLoan(nft)
+            console.log('🔵 MyHarvestNFTs - Calling parent onCreateLoan callback')
+            try {
+                const result = onCreateLoan(nft)
+                console.log('🔵 MyHarvestNFTs - Callback returned:', result)
+            } catch (error) {
+                console.error('❌ MyHarvestNFTs - Error calling onCreateLoan:', error)
+            }
         } else {
+            console.warn('⚠️ MyHarvestNFTs - No onCreateLoan callback provided')
             toast.success('Redirecting to loan creation...')
             // TODO: Navigate to loan creation with NFT data
         }
@@ -77,16 +109,19 @@ export default function MyHarvestNFTs({ farmerAddress, onCreateLoan }: MyHarvest
                 </button>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {nfts.map((nft, index) => (
-                    <HarvestNFTCard
-                        key={index}
-                        tokenId={nft.tokenId}
-                        serialNumber={nft.serialNumber}
-                        metadata={nft.metadata}
-                        onCreateLoan={() => handleCreateLoan(nft)}
-                    />
-                ))}
+            <div className="space-y-6">
+                {nfts.map((nft, index) => {
+                    console.log(`🔷 Rendering NFT ${index}:`, nft)
+                    return (
+                        <HarvestNFTCard
+                            key={index}
+                            tokenId={nft.tokenId}
+                            serialNumber={nft.serialNumber}
+                            metadata={nft.metadata}
+                            onCreateLoan={() => handleCreateLoan(nft)}
+                        />
+                    )
+                })}
             </div>
         </div>
     )

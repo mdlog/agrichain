@@ -86,35 +86,48 @@ export default function Marketplace() {
     const loadLoansFromBlockchain = async (): Promise<Loan[]> => {
         try {
             if (!provider) {
-                console.log('No provider available, skipping blockchain load')
+                console.warn('⚠️ No provider available - wallet not connected')
+                toast.error('Please connect your wallet to view loans')
                 return []
             }
 
             const contract = getContract(provider)
             const contractAddress = process.env.NEXT_PUBLIC_CONTRACT_ADDRESS
 
+            console.log('📋 Contract Address:', contractAddress)
+
             if (!contractAddress || contractAddress === '0x0000000000000000000000000000000000000000') {
-                console.log('Contract not deployed, skipping blockchain load')
+                console.error('❌ Contract not deployed')
+                toast.error('Contract not deployed')
                 return []
             }
 
             // Query LoanRequested events - use 'latest' to get all blocks
             const eventFilter = contract.filters.LoanRequested()
 
-            // Try to get events with a recent block range first for performance
+            // Try to get events with a larger block range
             const currentBlock = await provider.getBlockNumber()
-            const fromBlock = Math.max(0, currentBlock - 5000) // Last 5000 blocks
+            const fromBlock = Math.max(0, currentBlock - 50000) // Last 50000 blocks (increased from 5000)
             const toBlock = 'latest'
 
-            console.log('Querying LoanRequested events from block', fromBlock, 'to', toBlock)
+            console.log('🔍 Querying LoanRequested events from block', fromBlock, 'to', toBlock, '(current:', currentBlock, ')')
             const events = await contract.queryFilter(eventFilter, fromBlock, toBlock)
 
-            console.log('Found LoanRequested events:', events.length)
+            console.log('✅ Found LoanRequested events:', events.length)
+
+            if (events.length === 0) {
+                console.warn('⚠️ No LoanRequested events found in the specified block range')
+                console.log('💡 This could mean:')
+                console.log('   1. No loans have been created yet')
+                console.log('   2. Loans were created in older blocks (try increasing block range)')
+                console.log('   3. Wrong contract address')
+                toast.error('No loans found on blockchain')
+            }
 
             // Also query LoanFunded events to see all investments
             const fundedEventFilter = contract.filters.LoanFunded()
             const fundedEvents = await contract.queryFilter(fundedEventFilter, fromBlock, toBlock)
-            console.log('Found LoanFunded events:', fundedEvents.length)
+            console.log('💰 Found LoanFunded events:', fundedEvents.length)
             fundedEvents.forEach((event: any) => {
                 console.log(`  LoanFunded event:`, {
                     loanId: event.args[0].toString(),
@@ -335,11 +348,42 @@ export default function Marketplace() {
                 {loading ? (
                     <div className="text-center py-12">
                         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600 mx-auto"></div>
-                        <p className="mt-4 text-gray-600">Loading loans...</p>
+                        <p className="mt-4 text-gray-600">Loading loans from blockchain...</p>
+                        <p className="mt-2 text-sm text-gray-500">Please ensure your wallet is connected</p>
+                    </div>
+                ) : !provider ? (
+                    <div className="text-center py-12">
+                        <div className="mb-4 text-6xl">🔌</div>
+                        <p className="text-xl font-semibold text-gray-800 mb-2">Wallet Not Connected</p>
+                        <p className="text-gray-600 mb-4">Please connect your wallet to view loans from the blockchain</p>
+                        <button
+                            onClick={() => window.location.reload()}
+                            className="btn-primary"
+                        >
+                            Refresh Page
+                        </button>
                     </div>
                 ) : filteredLoans.length === 0 ? (
                     <div className="text-center py-12">
-                        <p className="text-gray-600">No loans found</p>
+                        <div className="mb-4 text-6xl">📭</div>
+                        <p className="text-xl font-semibold text-gray-800 mb-2">No Loans Found</p>
+                        <p className="text-gray-600 mb-4">
+                            {loans.length === 0
+                                ? 'No loans have been created on the blockchain yet'
+                                : 'No loans match your current filters'
+                            }
+                        </p>
+                        {loans.length === 0 && (
+                            <div className="mt-6 p-4 bg-blue-50 border border-blue-200 rounded-lg max-w-md mx-auto text-left">
+                                <p className="text-sm text-blue-800 font-semibold mb-2">💡 Troubleshooting Tips:</p>
+                                <ul className="text-sm text-blue-700 space-y-1 list-disc list-inside">
+                                    <li>Check browser console for detailed logs</li>
+                                    <li>Verify contract address in .env.local</li>
+                                    <li>Ensure loans were created on the same network (testnet)</li>
+                                    <li>Try creating a new loan from the Farmer page</li>
+                                </ul>
+                            </div>
+                        )}
                     </div>
                 ) : (
                     <>

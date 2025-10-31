@@ -6,7 +6,8 @@
 import {
     Client,
     AccountId,
-    PrivateKey
+    PrivateKey,
+    Hbar
 } from "@hashgraph/sdk"
 
 let client: Client | null = null
@@ -26,14 +27,19 @@ export function getHederaClient(): Client {
     const operatorId = AccountId.fromString(
         process.env.HEDERA_ACCOUNT_ID || ""
     )
-    const operatorKey = PrivateKey.fromString(
-        process.env.HEDERA_PRIVATE_KEY || ""
-    )
+
+    // Remove 0x prefix if present
+    let privateKeyString = process.env.HEDERA_PRIVATE_KEY || ""
+    if (privateKeyString.startsWith('0x')) {
+        privateKeyString = privateKeyString.substring(2)
+    }
+
+    const operatorKey = PrivateKey.fromStringECDSA(privateKeyString)
 
     client.setOperator(operatorId, operatorKey)
 
     // Set default max transaction fee
-    client.setDefaultMaxTransactionFee(20) // 20 HBAR
+    client.setDefaultMaxTransactionFee(new Hbar(20)) // 20 HBAR
 
     return client
 }

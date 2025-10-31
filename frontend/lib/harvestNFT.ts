@@ -8,6 +8,11 @@ import {
     TokenType,
     TokenSupplyType,
     TokenMintTransaction,
+    TransferTransaction,
+    TokenAssociateTransaction,
+    AccountId,
+    TokenId,
+    NftId,
     Hbar
 } from "@hashgraph/sdk"
 import { getHederaClient } from "./hederaClient"
@@ -80,7 +85,18 @@ export async function createHarvestNFT(
     // STEP 2: Mint NFT with Metadata
     console.log('Step 2: Minting NFT with metadata...')
 
-    // Prepare metadata JSON
+    // Prepare metadata (Hedera limit is 100 bytes)
+    // Store only a reference/hash, full data goes to smart contract
+    // Use minimal format: just crop type and timestamp
+    const timestamp = Date.now()
+    const compactMetadata = `${metadata.cropType}:${timestamp}`
+
+    const metadataBytes = Buffer.from(compactMetadata)
+
+    console.log('Metadata size:', metadataBytes.length, 'bytes')
+    console.log('Metadata:', compactMetadata)
+
+    // Full metadata for return (not stored in NFT)
     const metadataJson = {
         ...metadata,
         createdAt: new Date().toISOString(),
@@ -88,8 +104,6 @@ export async function createHarvestNFT(
         version: "1.0",
         network: "Hedera Testnet"
     }
-
-    const metadataBytes = Buffer.from(JSON.stringify(metadataJson))
 
     const mintTx = await new TokenMintTransaction()
         .setTokenId(tokenId)
@@ -102,7 +116,35 @@ export async function createHarvestNFT(
 
     console.log('✅ NFT Minted:', `${tokenId}/${serialNumber}`)
 
-    // STEP 3: Return result
+    // STEP 3: Transfer NFT to Farmer
+    console.log('Step 3: Transferring NFT to farmer...')
+
+    try {
+        // Note: Farmer must associate token first (done on frontend)
+        // For now, we'll try to transfer and handle association error
+
+        const farmerAccount = AccountId.fromString(farmerAccountId)
+        const nftId = new NftId(tokenId, serialNumber)
+
+        // Transfer NFT from treasury to farmer
+        const transferTx = await new TransferTransaction()
+            .addNftTransfer(tokenId, serialNumber, client.operatorAccountId!, farmerAccount)
+            .setMaxTransactionFee(new Hbar(20))
+            .execute(client)
+
+        const transferRx = await transferTx.getReceipt(client)
+
+        console.log('✅ NFT Transferred to farmer:', farmerAccountId)
+        console.log('Transfer status:', transferRx.status.toString())
+
+    } catch (transferError: any) {
+        console.warn('⚠️ NFT Transfer failed:', transferError.message)
+        console.log('NFT remains in treasury. Farmer needs to associate token first.')
+        // Don't throw error, NFT is still created successfully
+        // Farmer can claim it later by associating the token
+    }
+
+    // STEP 4: Return result
     const result: HarvestNFTResult = {
         tokenId: tokenId.toString(),
         serialNumber: serialNumber.toString(),

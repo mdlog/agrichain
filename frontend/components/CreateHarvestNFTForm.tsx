@@ -67,6 +67,31 @@ export default function CreateHarvestNFTForm({
                 toast.success('Harvest NFT created successfully!', { id: loadingToast })
                 toast.success(`Token ID: ${result.data.tokenId}`)
 
+                // Save to localStorage with internal ID
+                const nftData = {
+                    tokenId: result.data.tokenId,
+                    serialNumber: result.data.serialNumber,
+                    internalId: result.data.internalId, // Internal ID from smart contract
+                    metadata: {
+                        cropType: formData.cropType,
+                        expectedYield: parseInt(formData.expectedYield),
+                        estimatedValue: parseInt(formData.estimatedValue),
+                        harvestDate: formData.harvestDate,
+                        farmLocation: formData.farmLocation,
+                        farmSize: parseInt(formData.farmSize),
+                        farmerName: farmerName,
+                        farmerAddress: farmerAddress,
+                        isActive: true
+                    },
+                    createdAt: new Date().toISOString()
+                }
+
+                // Save to localStorage
+                const storedNFTs = localStorage.getItem(`nfts_${farmerAddress}`)
+                const nfts = storedNFTs ? JSON.parse(storedNFTs) : []
+                nfts.unshift(nftData)
+                localStorage.setItem(`nfts_${farmerAddress}`, JSON.stringify(nfts))
+
                 // Reset form
                 setFormData({
                     cropType: '',
@@ -79,7 +104,7 @@ export default function CreateHarvestNFTForm({
 
                 // Call success callback
                 if (onSuccess) {
-                    onSuccess(result.data)
+                    onSuccess(nftData)
                 }
             } else {
                 toast.error(result.error || 'Failed to create NFT', { id: loadingToast })
@@ -105,14 +130,105 @@ export default function CreateHarvestNFTForm({
                     <label className="block text-sm font-medium text-gray-700 mb-2">
                         Crop Type *
                     </label>
-                    <input
-                        type="text"
+                    <select
                         value={formData.cropType}
                         onChange={(e) => setFormData({ ...formData, cropType: e.target.value })}
-                        placeholder="e.g., Rice, Wheat, Corn"
-                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent bg-white"
                         disabled={isCreating}
-                    />
+                        required
+                    >
+                        <option value="">Select crop type...</option>
+
+                        {/* Cereals / Grains */}
+                        <optgroup label="🌾 Cereals & Grains">
+                            <option value="Rice">Rice</option>
+                            <option value="Wheat">Wheat</option>
+                            <option value="Corn">Corn</option>
+                            <option value="Barley">Barley</option>
+                            <option value="Oats">Oats</option>
+                            <option value="Sorghum">Sorghum</option>
+                            <option value="Millet">Millet</option>
+                        </optgroup>
+
+                        {/* Legumes */}
+                        <optgroup label="🫘 Legumes">
+                            <option value="Soybean">Soybean</option>
+                            <option value="Peanut">Peanut</option>
+                            <option value="Green Bean">Green Bean</option>
+                            <option value="Red Bean">Red Bean</option>
+                            <option value="Chickpea">Chickpea</option>
+                            <option value="Lentil">Lentil</option>
+                        </optgroup>
+
+                        {/* Vegetables */}
+                        <optgroup label="🥬 Vegetables">
+                            <option value="Tomato">Tomato</option>
+                            <option value="Potato">Potato</option>
+                            <option value="Onion">Onion</option>
+                            <option value="Garlic">Garlic</option>
+                            <option value="Cabbage">Cabbage</option>
+                            <option value="Carrot">Carrot</option>
+                            <option value="Chili">Chili</option>
+                            <option value="Eggplant">Eggplant</option>
+                            <option value="Cucumber">Cucumber</option>
+                            <option value="Lettuce">Lettuce</option>
+                        </optgroup>
+
+                        {/* Fruits */}
+                        <optgroup label="🍎 Fruits">
+                            <option value="Banana">Banana</option>
+                            <option value="Mango">Mango</option>
+                            <option value="Papaya">Papaya</option>
+                            <option value="Pineapple">Pineapple</option>
+                            <option value="Watermelon">Watermelon</option>
+                            <option value="Melon">Melon</option>
+                            <option value="Orange">Orange</option>
+                            <option value="Apple">Apple</option>
+                            <option value="Strawberry">Strawberry</option>
+                            <option value="Durian">Durian</option>
+                        </optgroup>
+
+                        {/* Cash Crops */}
+                        <optgroup label="☕ Cash Crops">
+                            <option value="Coffee">Coffee</option>
+                            <option value="Cocoa">Cocoa</option>
+                            <option value="Tea">Tea</option>
+                            <option value="Rubber">Rubber</option>
+                            <option value="Palm Oil">Palm Oil</option>
+                            <option value="Sugarcane">Sugarcane</option>
+                            <option value="Cotton">Cotton</option>
+                            <option value="Tobacco">Tobacco</option>
+                        </optgroup>
+
+                        {/* Spices & Herbs */}
+                        <optgroup label="🌿 Spices & Herbs">
+                            <option value="Black Pepper">Black Pepper</option>
+                            <option value="Ginger">Ginger</option>
+                            <option value="Turmeric">Turmeric</option>
+                            <option value="Galangal">Galangal</option>
+                            <option value="Lemongrass">Lemongrass</option>
+                            <option value="Vanilla">Vanilla</option>
+                            <option value="Cinnamon">Cinnamon</option>
+                            <option value="Clove">Clove</option>
+                            <option value="Nutmeg">Nutmeg</option>
+                        </optgroup>
+
+                        {/* Root Crops */}
+                        <optgroup label="🥔 Root Crops">
+                            <option value="Cassava">Cassava</option>
+                            <option value="Sweet Potato">Sweet Potato</option>
+                            <option value="Taro">Taro</option>
+                            <option value="Yam">Yam</option>
+                        </optgroup>
+
+                        {/* Other */}
+                        <optgroup label="🌱 Other">
+                            <option value="Mushroom">Mushroom</option>
+                            <option value="Bamboo">Bamboo</option>
+                            <option value="Other">Other</option>
+                        </optgroup>
+                    </select>
+                    <p className="text-xs text-gray-500 mt-1">Select the type of crop you're growing</p>
                 </div>
 
                 {/* Expected Yield */}

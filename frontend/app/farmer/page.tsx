@@ -2,13 +2,15 @@
 
 import { useState, useEffect } from 'react'
 import { useWallet } from '@/context/WalletContext'
-import { Sprout, Plus, List, TrendingUp, DollarSign, Calendar, Package, AlertCircle, CheckCircle2, Clock, Shield, Lock, ExternalLink } from 'lucide-react'
+import { Sprout, Plus, List, TrendingUp, DollarSign, Calendar, Package, AlertCircle, CheckCircle2, Clock, Shield, Lock, ExternalLink, Wheat, X } from 'lucide-react'
 import Link from 'next/link'
 import toast from 'react-hot-toast'
 import { getVerificationLevel } from '@/lib/verificationLevels'
 import { getContract } from '@/lib/contract'
 import { ethers } from 'ethers'
 import { hbarToWei, hbarToTinybar, tinybarToHBAR, weiToHBAR, debugHBARTransaction, validateHBARAmount, formatHBARNumber } from '@/lib/hbarUtils'
+import CreateHarvestNFTForm from '@/components/CreateHarvestNFTForm'
+import MyHarvestNFTs from '@/components/MyHarvestNFTs'
 
 interface CreatedLoan {
     id: number
@@ -27,8 +29,10 @@ interface CreatedLoan {
 
 export default function FarmerDashboard() {
     const { account, connectWallet, signer, provider } = useWallet()
-    const [activeTab, setActiveTab] = useState<'create' | 'loans'>('create')
+    const [activeTab, setActiveTab] = useState<'create' | 'nfts'>('create')
     const [showNewLoanToast, setShowNewLoanToast] = useState(false)
+    const [selectedNFTForLoan, setSelectedNFTForLoan] = useState<any>(null)
+    const [farmerName, setFarmerName] = useState('Farmer')
     const [isSubmitting, setIsSubmitting] = useState(false)
     const [blockchainLoans, setBlockchainLoans] = useState<any[]>([])
 
@@ -377,20 +381,78 @@ export default function FarmerDashboard() {
                         <Plus className="w-5 h-5" />
                         Create New Loan
                     </button>
+
                     <button
-                        onClick={() => setActiveTab('loans')}
-                        className={`flex items-center gap-2 px-6 py-3 rounded-lg font-semibold transition-all ${activeTab === 'loans'
+                        onClick={() => setActiveTab('nfts')}
+                        className={`flex items-center gap-2 px-6 py-3 rounded-lg font-semibold transition-all ${activeTab === 'nfts'
                             ? 'bg-primary-600 text-white shadow-lg shadow-primary-200'
                             : 'bg-white text-gray-700 hover:bg-gray-50 border border-gray-200'
                             }`}
                     >
-                        <List className="w-5 h-5" />
-                        My Loans
+                        <Wheat className="w-5 h-5" />
+                        Harvest NFTs 🆕
                     </button>
                 </div>
 
                 {/* Content */}
-                {activeTab === 'create' ? <CreateLoanForm onSuccess={addLoanToHistory} isSubmitting={isSubmitting} /> : <MyLoans loans={farmerLoans} provider={provider} account={account} blockchainLoans={blockchainLoans} setBlockchainLoans={setBlockchainLoans} setTotalRequested={setTotalRequested} setTotalFunded={setTotalFunded} setActiveLoansCount={setActiveLoansCount} setCompletedLoansCount={setCompletedLoansCount} />}
+                {activeTab === 'create' ? (
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                        <div>
+                            <h3 className="text-xl font-bold mb-4">Create New Loan</h3>
+                            <CreateLoanForm
+                                onSuccess={addLoanToHistory}
+                                isSubmitting={isSubmitting}
+                                provider={provider}
+                                account={account}
+                                selectedNFT={selectedNFTForLoan}
+                                onClearNFT={() => setSelectedNFTForLoan(null)}
+                            />
+                        </div>
+                        <div>
+                            <h3 className="text-xl font-bold mb-4">My Loans</h3>
+                            <MyLoans loans={farmerLoans} provider={provider} account={account} blockchainLoans={blockchainLoans} setBlockchainLoans={setBlockchainLoans} setTotalRequested={setTotalRequested} setTotalFunded={setTotalFunded} setActiveLoansCount={setActiveLoansCount} setCompletedLoansCount={setCompletedLoansCount} />
+                        </div>
+                    </div>
+                ) : (
+                    <div className="space-y-6">
+                        <div className="bg-blue-50 border border-blue-200 rounded-xl p-6">
+                            <h3 className="font-semibold text-blue-900 mb-2 flex items-center gap-2">
+                                <Wheat className="w-5 h-5" />
+                                🎉 Harvest NFTs - Use as Collateral
+                            </h3>
+                            <p className="text-blue-800 text-sm">
+                                Your harvest tokens are now real NFTs on Hedera blockchain!
+                                They can be verified on HashScan, transferred between wallets,
+                                and used as collateral for loans. Each NFT costs only ~0.05 HBAR (~$0.005) to create.
+                                Click "Request Loan" on any active NFT to use it as collateral.
+                            </p>
+                        </div>
+
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                            <div>
+                                <h3 className="text-xl font-bold mb-4">Create Harvest NFT</h3>
+                                <CreateHarvestNFTForm
+                                    farmerAddress={account || ''}
+                                    farmerName={farmerName}
+                                    onSuccess={(nft) => {
+                                        toast.success('NFT created! You can now use it for loans.')
+                                    }}
+                                />
+                            </div>
+                            <div>
+                                <h3 className="text-xl font-bold mb-4">My Harvest NFTs</h3>
+                                <MyHarvestNFTs
+                                    farmerAddress={account || ''}
+                                    onCreateLoan={(nft) => {
+                                        setSelectedNFTForLoan(nft)
+                                        setActiveTab('create')
+                                        toast.success('NFT selected! Fill in loan details.')
+                                    }}
+                                />
+                            </div>
+                        </div>
+                    </div>
+                )}
             </div>
         </div>
     )
@@ -521,12 +583,95 @@ function CreateLoanForm({ onSuccess, isSubmitting }: {
                                     required
                                 >
                                     <option value="">Select your crop type</option>
-                                    <option value="Corn">🌽 Corn</option>
-                                    <option value="Rice">🌾 Rice</option>
-                                    <option value="Wheat">🌾 Wheat</option>
-                                    <option value="Soybean">🫘 Soybean</option>
-                                    <option value="Coffee">☕ Coffee</option>
-                                    <option value="Cotton">🌱 Cotton</option>
+                                    
+                                    {/* Cereals & Grains */}
+                                    <optgroup label="🌾 Cereals & Grains">
+                                        <option value="Rice">Rice</option>
+                                        <option value="Wheat">Wheat</option>
+                                        <option value="Corn">Corn</option>
+                                        <option value="Barley">Barley</option>
+                                        <option value="Oats">Oats</option>
+                                        <option value="Sorghum">Sorghum</option>
+                                        <option value="Millet">Millet</option>
+                                    </optgroup>
+                                    
+                                    {/* Legumes */}
+                                    <optgroup label="🫘 Legumes">
+                                        <option value="Soybean">Soybean</option>
+                                        <option value="Peanut">Peanut</option>
+                                        <option value="Green Bean">Green Bean</option>
+                                        <option value="Red Bean">Red Bean</option>
+                                        <option value="Chickpea">Chickpea</option>
+                                        <option value="Lentil">Lentil</option>
+                                    </optgroup>
+                                    
+                                    {/* Vegetables */}
+                                    <optgroup label="🥬 Vegetables">
+                                        <option value="Tomato">Tomato</option>
+                                        <option value="Potato">Potato</option>
+                                        <option value="Onion">Onion</option>
+                                        <option value="Garlic">Garlic</option>
+                                        <option value="Cabbage">Cabbage</option>
+                                        <option value="Carrot">Carrot</option>
+                                        <option value="Chili">Chili</option>
+                                        <option value="Eggplant">Eggplant</option>
+                                        <option value="Cucumber">Cucumber</option>
+                                        <option value="Lettuce">Lettuce</option>
+                                    </optgroup>
+                                    
+                                    {/* Fruits */}
+                                    <optgroup label="🍎 Fruits">
+                                        <option value="Banana">Banana</option>
+                                        <option value="Mango">Mango</option>
+                                        <option value="Papaya">Papaya</option>
+                                        <option value="Pineapple">Pineapple</option>
+                                        <option value="Watermelon">Watermelon</option>
+                                        <option value="Melon">Melon</option>
+                                        <option value="Orange">Orange</option>
+                                        <option value="Apple">Apple</option>
+                                        <option value="Strawberry">Strawberry</option>
+                                        <option value="Durian">Durian</option>
+                                    </optgroup>
+                                    
+                                    {/* Cash Crops */}
+                                    <optgroup label="☕ Cash Crops">
+                                        <option value="Coffee">Coffee</option>
+                                        <option value="Cocoa">Cocoa</option>
+                                        <option value="Tea">Tea</option>
+                                        <option value="Rubber">Rubber</option>
+                                        <option value="Palm Oil">Palm Oil</option>
+                                        <option value="Sugarcane">Sugarcane</option>
+                                        <option value="Cotton">Cotton</option>
+                                        <option value="Tobacco">Tobacco</option>
+                                    </optgroup>
+                                    
+                                    {/* Spices & Herbs */}
+                                    <optgroup label="🌿 Spices & Herbs">
+                                        <option value="Black Pepper">Black Pepper</option>
+                                        <option value="Ginger">Ginger</option>
+                                        <option value="Turmeric">Turmeric</option>
+                                        <option value="Galangal">Galangal</option>
+                                        <option value="Lemongrass">Lemongrass</option>
+                                        <option value="Vanilla">Vanilla</option>
+                                        <option value="Cinnamon">Cinnamon</option>
+                                        <option value="Clove">Clove</option>
+                                        <option value="Nutmeg">Nutmeg</option>
+                                    </optgroup>
+                                    
+                                    {/* Root Crops */}
+                                    <optgroup label="🥔 Root Crops">
+                                        <option value="Cassava">Cassava</option>
+                                        <option value="Sweet Potato">Sweet Potato</option>
+                                        <option value="Taro">Taro</option>
+                                        <option value="Yam">Yam</option>
+                                    </optgroup>
+                                    
+                                    {/* Other */}
+                                    <optgroup label="🌱 Other">
+                                        <option value="Mushroom">Mushroom</option>
+                                        <option value="Bamboo">Bamboo</option>
+                                        <option value="Other">Other</option>
+                                    </optgroup>
                                 </select>
                             </div>
 
