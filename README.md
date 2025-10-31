@@ -1,6 +1,12 @@
+<div align="center">
+
+![AgriChain Finance Logo](agrichain-new.png)
+
 # 🌾 AgriChain Finance
 
 **Global Decentralized Agricultural Financing Platform powered by Hedera DLT**
+
+</div>
 
 > Connecting farmers worldwide with investors through blockchain technology. Access capital without banks, transparent, and low cost.
 
