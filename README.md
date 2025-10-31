@@ -22,6 +22,10 @@
 
 **View Certificate:** https://drive.google.com/file/d/1qwAF367SYiK83qeWX8jjWTv19UOvVAjX/view?usp=sharing
 
+### 📊 Pitch Deck
+
+**View Pitch Deck:** [PROJECT_PITCH.md](PROJECT_PITCH.md)
+
 ---
 
 ## 📋 Table of Contents
