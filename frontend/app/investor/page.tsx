@@ -2,14 +2,15 @@
 
 import { useState, useEffect } from 'react'
 import { useWallet } from '@/context/WalletContext'
-import { TrendingUp, Wallet as WalletIcon, DollarSign, Clock, ExternalLink } from 'lucide-react'
+import { TrendingUp, Wallet as WalletIcon, DollarSign, Clock, ExternalLink, Download } from 'lucide-react'
 import Link from 'next/link'
 import { getContract } from '@/lib/contract'
 import { ethers } from 'ethers'
 import { weiToHBAR, formatHBARNumber } from '@/lib/hbarUtils'
+import toast from 'react-hot-toast'
 
 export default function InvestorDashboard() {
-    const { account, connectWallet, provider } = useWallet()
+    const { account, connectWallet, provider, signer } = useWallet()
     const [activeTab, setActiveTab] = useState<'portfolio' | 'available'>('portfolio')
 
     // Real stats from blockchain
@@ -95,6 +96,7 @@ export default function InvestorDashboard() {
                     <Portfolio
                         provider={provider}
                         account={account}
+                        signer={signer}
                         setTotalInvested={setTotalInvested}
                         setTotalReturns={setTotalReturns}
                         setActiveInvestments={setActiveInvestments}
@@ -131,6 +133,7 @@ function StatCard({ icon, label, value, change }: {
 function Portfolio({
     provider,
     account,
+    signer,
     setTotalInvested,
     setTotalReturns,
     setActiveInvestments,
@@ -138,6 +141,7 @@ function Portfolio({
 }: {
     provider: any
     account: string | null
+    signer: any
     setTotalInvested: (value: string) => void
     setTotalReturns: (value: string) => void
     setActiveInvestments: (value: number) => void
@@ -145,10 +149,10 @@ function Portfolio({
 }) {
     const [investments, setInvestments] = useState<any[]>([])
     const [loading, setLoading] = useState(true)
+    const [withdrawingLoans, setWithdrawingLoans] = useState<Set<number>>(new Set())
 
-    // Load investments from blockchain
-    useEffect(() => {
-        const loadInvestments = async () => {
+    // Helper function to load investments (reusable)
+    const loadInvestments = async () => {
             if (!provider || !account) {
                 setLoading(false)
                 return
@@ -197,17 +201,40 @@ function Portfolio({
                         const investedHBAR = parseFloat(weiToHBAR(totalInvested))
                         const expectedReturn = investedHBAR * (1 + Number(loanDetails.interestRate) / 10000)
 
+                        // Calculate withdrawable amount if loan is repaid
+                        let withdrawableAmount = 0
+                        const withdrawnCount = investorInvestments.filter((inv: any) => inv.withdrawn).length
+                        const hasWithdrawable = Number(loanDetails.status) === 2 && withdrawnCount < investorInvestments.length
+
+                        if (hasWithdrawable) {
+                            // Calculate total withdrawable share
+                            const notWithdrawnInvestments = investorInvestments.filter((inv: any) => !inv.withdrawn)
+                            const totalNotWithdrawn = notWithdrawnInvestments.reduce(
+                                (sum: bigint, inv: any) => sum + inv.amount,
+                                BigInt(0)
+                            )
+                            const interest = (loanDetails.requestedAmount * BigInt(loanDetails.interestRate)) / BigInt(10000)
+                            const totalRepayment = loanDetails.requestedAmount + interest
+                            const withdrawableShare = (totalNotWithdrawn * totalRepayment) / loanDetails.fundedAmount
+                            withdrawableAmount = parseFloat(weiToHBAR(withdrawableShare.toString()))
+                        }
+
                         return {
                             loanId: Number(loanId),
                             cropType: harvestToken.cropType,
                             farmer: loanDetails.farmer,
                             invested: formatHBARNumber(investedHBAR.toString()), // Total invested in this loan
                             investmentCount: investorInvestments.length, // Number of separate investments
+                            withdrawnCount: withdrawnCount, // Number of withdrawn investments
                             interestRate: Number(loanDetails.interestRate),
                             duration: Number(loanDetails.duration),
                             status: Number(loanDetails.status),
                             expectedReturn: expectedReturn,
-                            daysLeft: Number(loanDetails.duration) // Simplified
+                            daysLeft: Number(loanDetails.duration), // Simplified
+                            withdrawableAmount: withdrawableAmount,
+                            hasWithdrawable: hasWithdrawable,
+                            fundedAmount: loanDetails.fundedAmount,
+                            requestedAmount: loanDetails.requestedAmount
                         }
                     } catch (error) {
                         console.error('Error loading investment:', error)
@@ -236,10 +263,100 @@ function Portfolio({
             } finally {
                 setLoading(false)
             }
+    }
+
+    // Load investments on mount
+    useEffect(() => {
+        if (provider && account) {
+            loadInvestments()
+        } else {
+            setLoading(false)
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [provider, account])
+
+    // Function to withdraw all investments for a loan
+    const handleWithdraw = async (loanId: number) => {
+        if (!signer || !account) {
+            toast.error('Please connect your wallet')
+            return
         }
 
-        loadInvestments()
-    }, [provider, account])
+        try {
+            setWithdrawingLoans(prev => new Set(prev).add(loanId))
+            const contract = getContract(signer)
+            
+            // Get all investments for this loan
+            const investments = await contract.getLoanInvestments(loanId)
+            const loanDetails = await contract.getLoanDetails(loanId)
+
+            // Filter investments that belong to this investor and haven't been withdrawn
+            const investorInvestments = investments.filter(
+                (inv: any) => inv.investor.toLowerCase() === account.toLowerCase() && !inv.withdrawn
+            )
+
+            if (investorInvestments.length === 0) {
+                toast.error('No investments available to withdraw')
+                return
+            }
+
+            // Check if loan is repaid
+            if (Number(loanDetails.status) !== 2) {
+                toast.error('Loan has not been repaid yet')
+                return
+            }
+
+            const loadingToast = toast.loading(`Withdrawing ${investorInvestments.length} investment(s)...`)
+
+            // Withdraw each investment (need to call multiple times for multiple investments)
+            let successCount = 0
+            let totalWithdrawn = BigInt(0)
+
+            for (let i = 0; i < investments.length; i++) {
+                const inv = investments[i]
+                if (inv.investor.toLowerCase() === account.toLowerCase() && !inv.withdrawn) {
+                    try {
+                        const tx = await contract.withdrawInvestment(loanId, i)
+                        await tx.wait()
+                        successCount++
+                        
+                        // Calculate amount withdrawn
+                        const interest = (loanDetails.requestedAmount * BigInt(loanDetails.interestRate)) / BigInt(10000)
+                        const totalRepayment = loanDetails.requestedAmount + interest
+                        const investorShare = (inv.amount * totalRepayment) / loanDetails.fundedAmount
+                        totalWithdrawn += investorShare
+                    } catch (error: any) {
+                        console.error(`Error withdrawing investment ${i}:`, error)
+                        // Continue with other investments
+                    }
+                }
+            }
+
+            toast.dismiss(loadingToast)
+
+            if (successCount > 0) {
+                const withdrawnHBAR = parseFloat(weiToHBAR(totalWithdrawn.toString()))
+                toast.success(`Successfully withdrawn ${formatHBARNumber(withdrawnHBAR.toString())} HBAR!`)
+                
+                // Reload investments by calling the loadInvestments function
+                if (provider && account) {
+                    await loadInvestments()
+                }
+            } else {
+                toast.error('Failed to withdraw investments')
+            }
+        } catch (error: any) {
+            console.error('Error withdrawing:', error)
+            const errorMsg = error.reason || error.message || 'Failed to withdraw'
+            toast.error(`Withdrawal failed: ${errorMsg}`)
+        } finally {
+            setWithdrawingLoans(prev => {
+                const newSet = new Set(prev)
+                newSet.delete(loanId)
+                return newSet
+            })
+        }
+    }
 
     if (loading) {
         return (
@@ -297,6 +414,11 @@ function Portfolio({
                                 <div>
                                     <p className="text-xs text-gray-500">Expected Return</p>
                                     <p className="font-bold text-green-600">{investment.expectedReturn.toFixed(2)} HBAR</p>
+                                    {investment.hasWithdrawable && (
+                                        <p className="text-xs text-blue-600 font-medium mt-1">
+                                            💰 {formatHBARNumber(investment.withdrawableAmount.toString())} available
+                                        </p>
+                                    )}
                                 </div>
                                 <div>
                                     <p className="text-xs text-gray-500">Interest</p>
@@ -309,13 +431,44 @@ function Portfolio({
                             </div>
 
                             {/* Right */}
-                            <div>
+                            <div className="flex flex-col gap-2">
                                 <Link
                                     href={`/loan/${investment.loanId}`}
                                     className="btn-secondary whitespace-nowrap"
                                 >
                                     View Details
                                 </Link>
+                                {investment.hasWithdrawable && (
+                                    <button
+                                        onClick={() => handleWithdraw(investment.loanId)}
+                                        disabled={withdrawingLoans.has(investment.loanId)}
+                                        className={`btn-primary whitespace-nowrap flex items-center justify-center gap-2 ${
+                                            withdrawingLoans.has(investment.loanId) 
+                                                ? 'opacity-50 cursor-not-allowed' 
+                                                : ''
+                                        }`}
+                                    >
+                                        {withdrawingLoans.has(investment.loanId) ? (
+                                            <>
+                                                <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                                </svg>
+                                                Withdrawing...
+                                            </>
+                                        ) : (
+                                            <>
+                                                <Download className="w-4 h-4" />
+                                                Withdraw {investment.withdrawableAmount > 0 ? formatHBARNumber(investment.withdrawableAmount.toString()) : ''} HBAR
+                                            </>
+                                        )}
+                                    </button>
+                                )}
+                                {investment.status === 2 && investment.investmentCount === investment.withdrawnCount && (
+                                    <div className="text-xs text-green-600 font-medium text-center">
+                                        ✓ Fully Withdrawn
+                                    </div>
+                                )}
                             </div>
                         </div>
                     </div>

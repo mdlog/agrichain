@@ -24,6 +24,7 @@ const CONTRACT_ABI = [
 
     // Write Functions
     'function createHarvestToken(address _tokenAddress, string memory _cropType, uint256 _expectedYield, uint256 _estimatedValue, uint256 _harvestDate) returns (uint256)',
+    'function createHarvestTokenFromNFT(uint256 _htsInternalId) returns (uint256)',
     'function requestLoan(uint256 _harvestTokenId, uint256 _requestedAmount, uint256 _interestRate, uint256 _duration) returns (uint256)',
     'function investInLoan(uint256 _loanId) payable',
     'function repayLoan(uint256 _loanId) payable',
