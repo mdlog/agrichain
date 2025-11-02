@@ -23,3 +23,21 @@ frontend/node_modules/
 # OS
 .DS_Store
 Thumbs.db
+
+# Documentation files (except README.md)
+*.md
+!README.md
+
+# Test files
+test/
+**/__tests__/
+**/*.test.js
+**/*.test.ts
+**/*.test.jsx
+**/*.test.tsx
+**/*.spec.js
+**/*.spec.ts
+**/*.spec.jsx
+**/*.spec.tsx
+scripts/test-*.js
+scripts/*test*.js

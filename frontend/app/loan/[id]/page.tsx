@@ -214,7 +214,16 @@ export default function LoanDetail() {
 
     const progress = calculateProgress(loan.fundedAmount, loan.requestedAmount)
     const remaining = parseFloat(loan.requestedAmount) - parseFloat(loan.fundedAmount)
-    const interestAmount = (parseFloat(loan.requestedAmount) * loan.interestRate) / 10000
+    
+    // Calculate interest rate percentage (same logic as marketplace)
+    // Handle different interest rate formats
+    // If > 100, it's in basis points (500 = 5%)
+    // If < 100, it's already in percentage (5 = 5%)
+    const interestRatePercent = loan.interestRate > 100
+        ? loan.interestRate / 100
+        : loan.interestRate
+    
+    const interestAmount = (parseFloat(loan.requestedAmount) * interestRatePercent) / 100
     const totalRepayment = parseFloat(loan.requestedAmount) + interestAmount
     const harvestDate = new Date(loan.harvestDate * 1000)
     const daysUntilHarvest = Math.ceil((loan.harvestDate * 1000 - Date.now()) / (1000 * 60 * 60 * 24))
@@ -278,7 +287,7 @@ export default function LoanDetail() {
                                 <StatBox
                                     icon={<TrendingUp className="w-5 h-5" />}
                                     label="Interest Rate"
-                                    value={`${(loan.interestRate / 100).toFixed(1)}%`}
+                                    value={`${interestRatePercent.toFixed(1)}%`}
                                     highlight
                                 />
                                 <StatBox
@@ -317,7 +326,7 @@ export default function LoanDetail() {
                                     <span className="font-bold">{loan.requestedAmount} HBAR</span>
                                 </div>
                                 <div className="flex justify-between">
-                                    <span className="text-gray-700">Interest ({(loan.interestRate / 100).toFixed(1)}%)</span>
+                                    <span className="text-gray-700">Interest ({interestRatePercent.toFixed(1)}%)</span>
                                     <span className="font-bold text-green-600">+{interestAmount.toFixed(2)} HBAR</span>
                                 </div>
                                 <div className="border-t border-primary-300 pt-3 flex justify-between">
@@ -325,7 +334,7 @@ export default function LoanDetail() {
                                     <span className="text-lg font-bold text-primary-600">{totalRepayment.toFixed(2)} HBAR</span>
                                 </div>
                                 <p className="text-sm text-gray-600 mt-4">
-                                    If you invest 100 HBAR, you'll receive {(100 * (1 + loan.interestRate / 10000)).toFixed(2)} HBAR after {loan.duration} days.
+                                    If you invest 100 HBAR, you'll receive {(100 * (1 + interestRatePercent / 100)).toFixed(2)} HBAR after {loan.duration} days.
                                 </p>
                             </div>
                         </div>
@@ -339,11 +348,6 @@ export default function LoanDetail() {
                                 <div className="flex items-center gap-2 text-sm text-gray-600 bg-primary-50 p-3 rounded-lg">
                                     <Wallet className="w-4 h-4 text-primary-600" />
                                     <span>Pay with <strong>HBAR</strong> cryptocurrency</span>
-                                </div>
-                                <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                                    <p className="text-xs text-blue-800">
-                                        <strong>Note:</strong> When MetaMask shows "Amount &lt; 0.000001", it's actually your full HBAR amount. MetaMask displays tinybar units in a different format, but your transaction will correctly send HBAR.
-                                    </p>
                                 </div>
                             </div>
 
@@ -384,13 +388,13 @@ export default function LoanDetail() {
                                                     <div className="flex justify-between text-sm">
                                                         <span>You receive</span>
                                                         <span className="font-bold text-green-600">
-                                                            {(parseFloat(investAmount) * (1 + loan.interestRate / 10000)).toFixed(2)} HBAR
+                                                            {(parseFloat(investAmount) * (1 + interestRatePercent / 100)).toFixed(2)} HBAR
                                                         </span>
                                                     </div>
                                                     <div className="flex justify-between text-sm">
                                                         <span>Profit</span>
                                                         <span className="font-bold text-green-600">
-                                                            +{(parseFloat(investAmount) * loan.interestRate / 10000).toFixed(2)} HBAR
+                                                            +{(parseFloat(investAmount) * interestRatePercent / 100).toFixed(2)} HBAR
                                                         </span>
                                                     </div>
                                                 </div>

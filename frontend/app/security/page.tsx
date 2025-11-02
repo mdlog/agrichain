@@ -268,7 +268,7 @@ export default function Security() {
                         <Link href="/marketplace" className="btn-primary bg-white text-primary-600 hover:bg-gray-100">
                             Browse Verified Loans
                         </Link>
-                        <Link href="/investor" className="btn-secondary border-white text-white hover:bg-primary-700">
+                        <Link href="/investor" className="bg-transparent border-2 border-white text-white hover:bg-white hover:text-primary-600 font-semibold py-2 px-4 sm:px-6 rounded-lg transition-colors duration-200 text-sm sm:text-base">
                             Investor Dashboard
                         </Link>
                     </div>

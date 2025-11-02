@@ -22,7 +22,7 @@ export default function Home() {
                             <Link href="/farmer" className="btn-primary bg-white text-primary-600 hover:bg-gray-100">
                                 I'm a Farmer
                             </Link>
-                            <Link href="/investor" className="btn-secondary border-white text-white hover:bg-primary-700">
+                            <Link href="/investor" className="bg-transparent border-2 border-white text-white hover:bg-white hover:text-primary-600 font-semibold py-2 px-4 sm:px-6 rounded-lg transition-colors duration-200 text-sm sm:text-base">
                                 I'm an Investor
                             </Link>
                         </div>
@@ -145,7 +145,7 @@ export default function Home() {
                         <Link href="/marketplace" className="btn-primary bg-white text-primary-600 hover:bg-gray-100">
                             View Marketplace
                         </Link>
-                        <Link href="/about" className="btn-secondary border-white text-white hover:bg-primary-700">
+                        <Link href="/about" className="bg-transparent border-2 border-white text-white hover:bg-white hover:text-primary-600 font-semibold py-2 px-4 sm:px-6 rounded-lg transition-colors duration-200 text-sm sm:text-base">
                             Learn More
                         </Link>
                     </div>

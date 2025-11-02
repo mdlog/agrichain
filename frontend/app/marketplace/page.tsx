@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useMemo } from 'react'
-import { Search, TrendingUp, Clock, DollarSign, ChevronLeft, ChevronRight, ExternalLink } from 'lucide-react'
+import { Search, TrendingUp, Clock, DollarSign, ChevronLeft, ChevronRight, ExternalLink, Timer } from 'lucide-react'
 import Link from 'next/link'
 import toast from 'react-hot-toast'
 import { useWallet } from '@/context/WalletContext'
@@ -17,6 +17,7 @@ interface Loan {
     duration: number
     fundedAmount: string
     status: number
+    createdAt?: number // Timestamp in seconds
     txHash?: string // Transaction hash from blockchain
     isOnChain?: boolean // Flag to identify blockchain loans
 }
@@ -24,21 +25,48 @@ interface Loan {
 const LOANS_PER_PAGE = 9
 
 export default function Marketplace() {
-    const { provider } = useWallet()
+    const { provider, isConnected, isConnecting } = useWallet()
     const [loans, setLoans] = useState<Loan[]>([])
     const [loading, setLoading] = useState(true)
     const [filter, setFilter] = useState('all')
     const [searchTerm, setSearchTerm] = useState('')
     const [currentPage, setCurrentPage] = useState(1)
     const [blockchainLoans, setBlockchainLoans] = useState<Loan[]>([])
+    const [debugInfo, setDebugInfo] = useState<{
+        contractAddress?: string
+        eventsFound?: number
+        loansLoaded?: number
+        currentBlock?: number
+        blockRange?: number
+        networkId?: number
+        error?: string
+    }>({})
+    const [showDebug, setShowDebug] = useState(false)
+    const [hasShownWalletError, setHasShownWalletError] = useState(false)
 
     useEffect(() => {
-        loadLoans()
+        // Only load loans if wallet is connected or if we're still connecting
+        // Don't show error if wallet is still connecting
+        if (isConnecting) {
+            return // Wait for connection to complete
+        }
+
+        if (isConnected && provider) {
+            // Reset error flag when wallet connects
+            setHasShownWalletError(false)
+            loadLoans()
+        } else if (!isConnected && !isConnecting) {
+            // Only show error if wallet is definitely not connected
+            setLoading(false)
+            setLoans([])
+        }
 
         // Listen for storage changes to auto-refresh
         const handleStorageChange = () => {
-            console.log('Storage change detected, reloading loans...')
-            loadLoans()
+            if (isConnected && provider) {
+                console.log('Storage change detected, reloading loans...')
+                loadLoans()
+            }
         }
 
         // Listen for custom events
@@ -47,20 +75,31 @@ export default function Marketplace() {
         window.addEventListener('storage', handleStorageChange)
 
         // Also listen for focus event to refresh when user comes back to tab
-        window.addEventListener('focus', () => {
-            console.log('Page focused, reloading loans...')
-            loadLoans()
-        })
+        const handleFocus = () => {
+            if (isConnected && provider) {
+                console.log('Page focused, reloading loans...')
+                loadLoans()
+            }
+        }
+        window.addEventListener('focus', handleFocus)
 
         return () => {
             window.removeEventListener('loanCreated', handleStorageChange)
             window.removeEventListener('loanUpdated', handleStorageChange)
             window.removeEventListener('storage', handleStorageChange)
-            window.removeEventListener('focus', () => loadLoans())
+            window.removeEventListener('focus', handleFocus)
         }
-    }, [provider]) // Add provider as dependency to re-run when wallet connects
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [provider, isConnected, isConnecting]) // loadLoans is stable and checks wallet state internally
 
     const loadLoans = async () => {
+        // Don't load if wallet is not connected
+        if (!isConnected || !provider) {
+            console.log('⏸️ Skipping loadLoans - wallet not connected')
+            setLoading(false)
+            return
+        }
+
         try {
             setLoading(true)
 
@@ -73,10 +112,40 @@ export default function Marketplace() {
             setLoans(validBlockchainLoans)
             setBlockchainLoans(validBlockchainLoans)
 
-            console.log('Loaded loans from blockchain:', validBlockchainLoans.length)
-        } catch (error) {
+            // Update debug info with final result
+            setDebugInfo(prev => ({
+                ...prev,
+                loansLoaded: validBlockchainLoans.length
+            }))
+
+            console.log('📋 Final Result:')
+            console.log('   Total loans loaded:', validBlockchainLoans.length)
+            console.log('   Loans with details:', validBlockchainLoans.map(l => ({
+                id: l.id,
+                cropType: l.cropType,
+                requestedAmount: l.requestedAmount,
+                fundedAmount: l.fundedAmount,
+                status: l.status,
+                txHash: l.txHash?.slice(0, 10) + '...' + l.txHash?.slice(-8)
+            })))
+            
+            if (validBlockchainLoans.length === 0 && onChainLoans.length > 0) {
+                console.warn('⚠️ Some loans were filtered out (missing txHash or isOnChain flag)')
+                console.log('   Total loans found:', onChainLoans.length)
+                console.log('   Valid loans:', validBlockchainLoans.length)
+                setDebugInfo(prev => ({
+                    ...prev,
+                    error: `${onChainLoans.length} loans found but filtered out (missing txHash or isOnChain flag)`
+                }))
+            }
+        } catch (error: any) {
             console.error('Error loading loans:', error)
-            toast.error('Failed to load loans from blockchain')
+            const errorMsg = error.message || 'Failed to load loans from blockchain'
+            toast.error(errorMsg)
+            setDebugInfo(prev => ({
+                ...prev,
+                error: errorMsg
+            }))
             setLoans([]) // Show empty if blockchain fails
         } finally {
             setLoading(false)
@@ -87,7 +156,11 @@ export default function Marketplace() {
         try {
             if (!provider) {
                 console.warn('⚠️ No provider available - wallet not connected')
-                toast.error('Please connect your wallet to view loans')
+                // Don't show toast here - it's handled in the UI component
+                // Only show toast once if wallet is definitely not connected
+                if (!isConnected && !isConnecting && !hasShownWalletError) {
+                    setHasShownWalletError(true)
+                }
                 return []
             }
 
@@ -106,22 +179,90 @@ export default function Marketplace() {
             const eventFilter = contract.filters.LoanRequested()
 
             // Try to get events with a larger block range
+            // Hedera Testnet moves fast, so we need a larger range
             const currentBlock = await provider.getBlockNumber()
-            const fromBlock = Math.max(0, currentBlock - 50000) // Last 50000 blocks (increased from 5000)
+            const fromBlock = Math.max(0, currentBlock - 150000) // Last 150,000 blocks to catch older loans
             const toBlock = 'latest'
+            const network = await provider.getNetwork()
+
+            // Update debug info before query
+            setDebugInfo({
+                contractAddress,
+                currentBlock,
+                blockRange: currentBlock - fromBlock,
+                networkId: Number(network.chainId)
+            })
 
             console.log('🔍 Querying LoanRequested events from block', fromBlock, 'to', toBlock, '(current:', currentBlock, ')')
-            const events = await contract.queryFilter(eventFilter, fromBlock, toBlock)
+            console.log(`   Block range: ${currentBlock - fromBlock} blocks (${Math.round((currentBlock - fromBlock) / 1000)}k blocks)`)
+            
+            let events = []
+            try {
+                events = await contract.queryFilter(eventFilter, fromBlock, toBlock)
+            } catch (error: any) {
+                // If query fails, try with smaller range
+                console.warn('⚠️ Query failed with large range, trying smaller range...')
+                const fallbackFromBlock = Math.max(0, currentBlock - 50000)
+                try {
+                    events = await contract.queryFilter(eventFilter, fallbackFromBlock, toBlock)
+                    console.log(`✅ Fallback query succeeded with ${fallbackFromBlock} to ${toBlock}`)
+                } catch (fallbackError: any) {
+                    console.error('❌ Fallback query also failed:', fallbackError.message)
+                    // Try querying from block 0 as last resort
+                    try {
+                        events = await contract.queryFilter(eventFilter, 0, toBlock)
+                        console.log('✅ Query from block 0 succeeded')
+                    } catch (finalError: any) {
+                        console.error('❌ All query attempts failed:', finalError.message)
+                        throw finalError
+                    }
+                }
+            }
+
+            // Update debug info with events count
+            setDebugInfo(prev => ({
+                ...prev,
+                eventsFound: events.length
+            }))
 
             console.log('✅ Found LoanRequested events:', events.length)
+            console.log('📊 Query Details:', {
+                contractAddress,
+                currentBlock,
+                fromBlock,
+                toBlock,
+                blockRange: currentBlock - fromBlock,
+                network: network.chainId
+            })
 
             if (events.length === 0) {
                 console.warn('⚠️ No LoanRequested events found in the specified block range')
+                console.log('💡 Debug Information:')
+                console.log('   Contract Address:', contractAddress)
+                console.log('   Current Block:', currentBlock)
+                console.log('   Query Range:', `${fromBlock} to ${toBlock}`)
+                console.log('   Network:', network)
                 console.log('💡 This could mean:')
                 console.log('   1. No loans have been created yet')
                 console.log('   2. Loans were created in older blocks (try increasing block range)')
                 console.log('   3. Wrong contract address')
-                toast.error('No loans found on blockchain')
+                console.log('   4. Network mismatch (not on Hedera Testnet)')
+                
+                // Show more helpful error message
+                const errorMsg = `No loans found. Contract: ${contractAddress?.slice(0, 10)}...${contractAddress?.slice(-8)} | Block: ${currentBlock}`
+                toast.error(errorMsg, { duration: 5000 })
+            } else {
+                console.log(`✅ Found ${events.length} LoanRequested event(s)`)
+                events.forEach((event: any, index: number) => {
+                    console.log(`   Event ${index + 1}:`, {
+                        loanId: event.args[0].toString(),
+                        farmer: event.args[1],
+                        amount: event.args[2].toString(),
+                        amountHBAR: ethers.formatEther(event.args[2]),
+                        txHash: event.transactionHash,
+                        blockNumber: event.blockNumber
+                    })
+                })
             }
 
             // Also query LoanFunded events to see all investments
@@ -207,6 +348,7 @@ export default function Marketplace() {
                         duration: Number(loanDetails.duration),
                         fundedAmount: fundedAmountHBAR, // Keep as string for display
                         status: Number(loanDetails.status),
+                        createdAt: Number(loanDetails.createdAt), // Store timestamp in seconds
                         txHash: txHash,
                         isOnChain: true
                     } as Loan
@@ -286,6 +428,12 @@ export default function Marketplace() {
                             >
                                 🔄 Refresh
                             </button>
+                            <button
+                                onClick={() => setShowDebug(!showDebug)}
+                                className="px-3 sm:px-4 py-2 text-xs sm:text-sm font-medium text-gray-600 bg-gray-50 rounded-lg hover:bg-gray-100 transition"
+                            >
+                                {showDebug ? '🔍 Hide Debug' : '🔍 Debug Info'}
+                            </button>
                             <div className="flex items-center gap-2 text-xs sm:text-sm text-green-600">
                                 <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
                                 <span className="font-medium">
@@ -295,6 +443,54 @@ export default function Marketplace() {
                         </div>
                     </div>
                 </div>
+
+                {/* Debug Panel */}
+                {showDebug && (
+                    <div className="card mb-6 bg-blue-50 border-blue-200">
+                        <h3 className="font-bold mb-3 text-blue-900">🔍 Debug Information</h3>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                            <div>
+                                <span className="font-medium text-gray-700">Contract Address:</span>
+                                <span className="ml-2 font-mono text-xs break-all">{debugInfo.contractAddress || 'Not set'}</span>
+                            </div>
+                            <div>
+                                <span className="font-medium text-gray-700">Network:</span>
+                                <span className="ml-2">{debugInfo.networkId === 296 ? '✅ Hedera Testnet (296)' : `⚠️ ${debugInfo.networkId || 'Unknown'}`}</span>
+                            </div>
+                            <div>
+                                <span className="font-medium text-gray-700">Current Block:</span>
+                                <span className="ml-2">{debugInfo.currentBlock?.toLocaleString() || 'N/A'}</span>
+                            </div>
+                            <div>
+                                <span className="font-medium text-gray-700">Block Range:</span>
+                                <span className="ml-2">{debugInfo.blockRange?.toLocaleString() || 'N/A'} blocks</span>
+                            </div>
+                            <div>
+                                <span className="font-medium text-gray-700">Events Found:</span>
+                                <span className="ml-2 font-bold">{debugInfo.eventsFound ?? 'N/A'}</span>
+                            </div>
+                            <div>
+                                <span className="font-medium text-gray-700">Loans Loaded:</span>
+                                <span className="ml-2 font-bold">{debugInfo.loansLoaded ?? 'N/A'}</span>
+                            </div>
+                            {debugInfo.error && (
+                                <div className="col-span-2">
+                                    <span className="font-medium text-red-700">Error:</span>
+                                    <span className="ml-2 text-red-600">{debugInfo.error}</span>
+                                </div>
+                            )}
+                        </div>
+                        <div className="mt-4 text-xs text-gray-600">
+                            <p>💡 <strong>Tips:</strong></p>
+                            <ul className="list-disc list-inside mt-1 space-y-1">
+                                <li>Check browser console (F12) for detailed logs</li>
+                                <li>Ensure wallet is connected to Hedera Testnet</li>
+                                <li>Verify contract address matches deployed contract</li>
+                                <li>Loans must have valid txHash to appear</li>
+                            </ul>
+                        </div>
+                    </div>
+                )}
 
                 {/* Filters */}
                 <div className="card mb-8">
@@ -351,7 +547,12 @@ export default function Marketplace() {
                         <p className="mt-4 text-gray-600">Loading loans from blockchain...</p>
                         <p className="mt-2 text-sm text-gray-500">Please ensure your wallet is connected</p>
                     </div>
-                ) : !provider ? (
+                ) : isConnecting ? (
+                    <div className="text-center py-12">
+                        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600 mx-auto"></div>
+                        <p className="mt-4 text-gray-600">Connecting wallet...</p>
+                    </div>
+                ) : !isConnected || !provider ? (
                     <div className="text-center py-12">
                         <div className="mb-4 text-6xl">🔌</div>
                         <p className="text-xl font-semibold text-gray-800 mb-2">Wallet Not Connected</p>
@@ -420,6 +621,63 @@ function LoanCard({ loan }: { loan: Loan }) {
     const requested = parseFloat(loan.requestedAmount)
     const progress = requested > 0 ? Math.min((funded / requested) * 100, 100) : 0
 
+    // Countdown timer state
+    const [timeRemaining, setTimeRemaining] = useState<{
+        days: number
+        hours: number
+        minutes: number
+        seconds: number
+        expired: boolean
+    } | null>(null)
+
+    // Calculate time remaining
+    useEffect(() => {
+        if (!loan.createdAt || !loan.duration) {
+            setTimeRemaining(null)
+            return
+        }
+
+        const calculateTimeRemaining = () => {
+            const now = Math.floor(Date.now() / 1000) // Current time in seconds
+            const createdAt = loan.createdAt!
+            const durationSeconds = loan.duration * 24 * 60 * 60 // Convert days to seconds
+            const deadline = createdAt + durationSeconds
+            const remaining = deadline - now
+
+            if (remaining <= 0) {
+                setTimeRemaining({
+                    days: 0,
+                    hours: 0,
+                    minutes: 0,
+                    seconds: 0,
+                    expired: true
+                })
+                return
+            }
+
+            const days = Math.floor(remaining / (24 * 60 * 60))
+            const hours = Math.floor((remaining % (24 * 60 * 60)) / (60 * 60))
+            const minutes = Math.floor((remaining % (60 * 60)) / 60)
+            const seconds = remaining % 60
+
+            setTimeRemaining({
+                days,
+                hours,
+                minutes,
+                seconds,
+                expired: false
+            })
+        }
+
+        // Calculate immediately
+        calculateTimeRemaining()
+
+        // Update every second
+        const interval = setInterval(calculateTimeRemaining, 1000)
+
+        return () => clearInterval(interval)
+    }, [loan.createdAt, loan.duration])
+
     // Debug logging for each loan card
     console.log(`LoanCard ${loan.id} progress calculation:`, {
         funded: funded,
@@ -473,6 +731,88 @@ function LoanCard({ loan }: { loan: Loan }) {
                     <span className="font-bold">{loan.duration} days</span>
                 </div>
             </div>
+
+            {/* Countdown Timer */}
+            {timeRemaining !== null && loan.status === 0 && (
+                <div className={`mb-4 p-3 rounded-lg border ${
+                    timeRemaining.expired 
+                        ? 'bg-red-50 border-red-200' 
+                        : timeRemaining.days < 3 
+                            ? 'bg-yellow-50 border-yellow-200' 
+                            : 'bg-gradient-to-r from-blue-50 to-purple-50 border-blue-200'
+                }`}>
+                    <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                            <Timer className={`w-4 h-4 ${
+                                timeRemaining.expired 
+                                    ? 'text-red-600' 
+                                    : timeRemaining.days < 3 
+                                        ? 'text-yellow-600' 
+                                        : 'text-blue-600'
+                            }`} />
+                            <span className={`text-xs font-medium ${
+                                timeRemaining.expired 
+                                    ? 'text-red-700' 
+                                    : timeRemaining.days < 3 
+                                        ? 'text-yellow-700' 
+                                        : 'text-gray-700'
+                            }`}>
+                                {timeRemaining.expired ? 'Expired' : 'Time Remaining:'}
+                            </span>
+                        </div>
+                        {timeRemaining.expired ? (
+                            <span className="text-xs font-bold text-red-600 animate-pulse">EXPIRED</span>
+                        ) : (
+                            <div className="flex items-center gap-1.5">
+                                {timeRemaining.days > 0 && (
+                                    <div className="flex items-center gap-0.5 px-2 py-1 bg-white rounded border border-blue-200">
+                                        <span className={`text-sm font-bold ${
+                                            timeRemaining.days < 3 ? 'text-yellow-600' : 'text-blue-600'
+                                        }`}>
+                                            {timeRemaining.days}
+                                        </span>
+                                        <span className="text-xs text-gray-600">d</span>
+                                    </div>
+                                )}
+                                <div className="flex items-center gap-0.5 px-2 py-1 bg-white rounded border border-blue-200">
+                                    <span className={`text-sm font-bold ${
+                                        timeRemaining.days < 3 ? 'text-yellow-600' : 'text-blue-600'
+                                    }`}>
+                                        {String(timeRemaining.hours).padStart(2, '0')}
+                                    </span>
+                                    <span className="text-xs text-gray-600">h</span>
+                                </div>
+                                <div className="flex items-center gap-0.5 px-2 py-1 bg-white rounded border border-blue-200">
+                                    <span className={`text-sm font-bold ${
+                                        timeRemaining.days < 3 ? 'text-yellow-600' : 'text-blue-600'
+                                    }`}>
+                                        {String(timeRemaining.minutes).padStart(2, '0')}
+                                    </span>
+                                    <span className="text-xs text-gray-600">m</span>
+                                </div>
+                                {timeRemaining.days < 7 && (
+                                    <div className="flex items-center gap-0.5 px-2 py-1 bg-white rounded border border-blue-200">
+                                        <span className={`text-sm font-bold ${
+                                            timeRemaining.days < 3 ? 'text-yellow-600' : 'text-blue-600'
+                                        }`}>
+                                            {String(timeRemaining.seconds).padStart(2, '0')}
+                                        </span>
+                                        <span className="text-xs text-gray-600">s</span>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                    </div>
+                    {timeRemaining.expired && (
+                        <p className="text-xs text-red-600 mt-2 font-medium">⚠️ This loan has expired and may be closed soon.</p>
+                    )}
+                    {!timeRemaining.expired && timeRemaining.days < 3 && (
+                        <p className="text-xs text-yellow-700 mt-2 font-medium">
+                            ⚠️ Only {timeRemaining.days} day{timeRemaining.days !== 1 ? 's' : ''} remaining!
+                        </p>
+                    )}
+                </div>
+            )}
 
             {/* Progress */}
             <div className="mb-4">
