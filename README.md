@@ -282,8 +282,8 @@ Repayment: 105 HBAR (100 + 5 interest)
 #### 1. Clone Repository
 
 ```bash
-git clone https://github.com/yourusername/agrichain-finance.git
-cd agrichain-finance
+git clone https://github.com/mdlog/agrichain.git
+cd agrichain
 ```
 
 #### 2. Install Dependencies
