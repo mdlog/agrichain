@@ -78,47 +78,159 @@
 ## 🏗️ Architecture
 
 ```
-┌─────────────┐      ┌──────────────┐      ┌─────────────┐
-│   Farmer    │──────│  Smart       │──────│  Investor   │
-│             │      │  Contract    │      │             │
-│ - Tokenize  │      │              │      │ - Browse    │
-│ - Request   │      │ - Verify     │      │ - Invest    │
-│ - Repay     │      │ - Escrow     │      │ - Withdraw  │
-└─────────────┘      │ - Distribute │      └─────────────┘
-                     └──────────────┘
-                            │
-                     ┌──────┴──────┐
-                     │   Hedera    │
-                     │  Blockchain │
-                     └─────────────┘
+┌─────────────┐
+│   Farmer    │
+│             │
+│ - Create NFT│
+│ - Request   │
+│ - Repay     │
+└──────┬──────┘
+       │
+       ├─────────────────────────────────┐
+       │                                 │
+       ▼                                 ▼
+┌──────────────────┐         ┌──────────────────────┐
+│ HarvestTokenNFT  │         │  AgriChainFinance    │
+│   Contract       │◄────────┤    Contract          │
+│                  │         │                      │
+│ - Register NFT   │         │ - Create Token       │
+│ - Track Metadata │         │ - Request Loan       │
+│ - Verify Owner   │         │ - Escrow Funds       │
+│ - Deactivate     │         │ - Multiple Investors │
+│ - Reactivate     │         │ - Repay & Distribute │
+└──────────────────┘         └──────────┬───────────┘
+                                        │
+                                        │
+                    ┌───────────────────┴───────────────────┐
+                    │                                       │
+                    ▼                                       ▼
+            ┌──────────────┐                      ┌──────────────┐
+            │   Investor   │                      │   Investor   │
+            │      A        │                      │      B       │
+            │               │                      │               │
+            │ - Browse      │                      │ - Browse      │
+            │ - Invest      │                      │ - Invest      │
+            │ - Withdraw    │                      │ - Withdraw   │
+            └──────────────┘                      └──────────────┘
+                    │                                       │
+                    └───────────────┬───────────────────────┘
+                                    │
+                                    ▼
+                            ┌──────────────┐
+                            │   Hedera     │
+                            │  Blockchain  │
+                            └──────────────┘
 ```
+
+### Smart Contracts Architecture
+
+**Two-Contract System:**
+
+1. **HarvestTokenNFT Contract** (`0xF1f3038178ba4cC4A5b5bB13D60655d5610c6eF2`)
+   - Manages NFT registration and metadata tracking
+   - Tracks HTS NFTs created off-chain via Hedera SDK
+   - Verifies NFT ownership
+   - Handles NFT activation/deactivation (collateral lock/unlock)
+
+2. **AgriChainFinance Contract** (`0x2ad4F8805A205E16352B7EA81449Fbf5481437fA`)
+   - Main lending platform contract
+   - Creates harvest tokens from NFTs
+   - Manages loan requests and investments
+   - Handles repayments and profit distribution
+   - Integrates with HarvestTokenNFT for NFT operations
 
 ### Data Flow
 
 ```
-1. Farmer → Create Harvest NFT → Mint on Hedera (~$0.005)
-2. Farmer → Request Loan → Use NFT or Create New Token
-3. Loan → Listed in Marketplace → Visible to Investors
-4. Investor → Browse Loans → Invest HBAR
-5. Smart Contract → Escrow Funds → Transfer to Farmer
-6. Farmer → Harvest & Sell → Repay Loan + Interest
-7. Smart Contract → Calculate Profit → Distribute to Investors
-8. NFT → Reusable → Can be used for future loans
+COMPLETE FLOW:
+
+1. NFT Creation Flow:
+   Farmer → Fill NFT Form
+   → Frontend API → Hedera SDK → Mint NFT on Hedera
+   → Backend → Register in HarvestTokenNFT Contract
+   → NFT stored with internalId
+
+2. Loan Creation Flow (Option A - Use NFT):
+   Farmer → Select NFT from HarvestTokenNFT
+   → Frontend auto-fills form
+   → AgriChainFinance.createHarvestTokenFromNFT(internalId)
+   → AgriChainFinance verifies ownership via HarvestTokenNFT
+   → Creates internal HarvestToken record
+   → Returns harvestTokenId
+   → AgriChainFinance.requestLoan(harvestTokenId, ...)
+   → NFT deactivated sebagai collateral
+   → Loan listed in marketplace
+
+3. Investment Flow (Multiple Investors):
+   Multiple Investors → Browse Marketplace
+   → Investor A → investInLoan(loanId) → 30 HBAR
+   → Investor B → investInLoan(loanId) → 50 HBAR
+   → Investor C → investInLoan(loanId) → 20 HBAR
+   → Total: 100 HBAR → Loan Fully Funded
+   → Funds transferred to Farmer
+
+4. Repayment Flow:
+   Farmer → repayLoan(loanId) → 105 HBAR (100 + 5 interest)
+   → Contract: Status = Repaid
+   → NFT reactivated (unlocked via HarvestTokenNFT)
+   → Funds held in contract for distribution
+
+5. Withdrawal Flow:
+   Investor A → withdrawInvestment(loanId, index=0) → 31.5 HBAR
+   Investor B → withdrawInvestment(loanId, index=1) → 52.5 HBAR
+   Investor C → withdrawInvestment(loanId, index=2) → 21 HBAR
+   → Total: 105 HBAR distributed proportionally
 ```
 
 ### NFT Flow
 
 ```
-Option A: Use Existing NFT
-1. Farmer selects existing NFT from dropdown
-2. Form auto-fills with NFT data (read-only)
-3. Skip to loan details (amount, interest, duration)
-4. Submit → Loan created using NFT as collateral
+Option A: Use Existing NFT (Recommended)
 
-Option B: Create New Harvest Token
+1. NFT Creation (One-time):
+   - Farmer creates NFT via "Harvest NFTs" tab
+   - NFT minted on Hedera via SDK
+   - NFT registered in HarvestTokenNFT contract
+   - Gets internalId for tracking
+
+2. Loan Creation (Using NFT):
+   - Farmer selects NFT from dropdown
+   - Form auto-fills with NFT metadata
+   - Frontend calls AgriChainFinance.createHarvestTokenFromNFT(internalId)
+   - AgriChainFinance verifies ownership via HarvestTokenNFT
+   - AgriChainFinance creates internal HarvestToken record
+   - Frontend calls AgriChainFinance.requestLoan(harvestTokenId, ...)
+   - NFT deactivated sebagai collateral (via HarvestTokenNFT)
+   - Loan listed in marketplace
+
+Option B: Create New Harvest Token (Legacy)
+
 1. Farmer fills harvest details manually
 2. Fill loan details
-3. Submit → Harvest token + Loan created together
+3. Submit → Creates harvest token directly (no NFT)
+4. Loan created using harvest token as collateral
+```
+
+### Multiple Investors Support
+
+**Architecture:** 1 NFT → 1 Loan → Multiple Investors
+
+- ✅ 1 NFT = 1 Loan Request = Multiple Investors can invest
+- ✅ Each investment tracked separately in array
+- ✅ Proportional distribution on repayment
+- ✅ Independent withdrawal per investor
+
+**Example:**
+```
+Loan #0 (100 HBAR):
+├── Investor A: 30 HBAR (investmentIndex=0)
+├── Investor B: 50 HBAR (investmentIndex=1)
+└── Investor C: 20 HBAR (investmentIndex=2)
+
+Repayment: 105 HBAR (100 + 5 interest)
+├── Investor A withdraw: (30/100) × 105 = 31.5 HBAR
+├── Investor B withdraw: (50/100) × 105 = 52.5 HBAR
+└── Investor C withdraw: (20/100) × 105 = 21 HBAR
 ```
 
 ---
@@ -214,8 +326,8 @@ nano .env.local
 
 **Required variables in `frontend/.env.local`:**
 ```env
-NEXT_PUBLIC_CONTRACT_ADDRESS=0xYourContractAddress
-NEXT_PUBLIC_HARVEST_NFT_CONTRACT=0xYourNFTContractAddress
+NEXT_PUBLIC_CONTRACT_ADDRESS=0x2ad4F8805A205E16352B7EA81449Fbf5481437fA
+NEXT_PUBLIC_HARVEST_NFT_CONTRACT=0xF1f3038178ba4cC4A5b5bB13D60655d5610c6eF2
 NEXT_PUBLIC_HEDERA_NETWORK=testnet
 NEXT_PUBLIC_HEDERA_RPC_URL=https://testnet.hashio.io/api
 HEDERA_ACCOUNT_ID=0.0.YOUR_ACCOUNT_ID
@@ -229,14 +341,21 @@ HEDERA_PRIVATE_KEY=YOUR_PRIVATE_KEY
 npm run compile
 ```
 
-#### 5. Deploy Smart Contract
+#### 5. Deploy Smart Contracts
+
+**Note:** You need to deploy 2 contracts in order:
 
 ```bash
-# Deploy to Hedera Testnet
+# Step 1: Deploy HarvestTokenNFT contract first
+npm run deploy:nft:testnet
+
+# Step 2: Deploy AgriChainFinance contract (pass NFT contract address)
 npm run deploy:testnet
 
-# Copy the contract address from output
-# Update frontend/.env.local with the contract address
+# Copy both contract addresses from output
+# Update frontend/.env.local with both addresses:
+# - NEXT_PUBLIC_CONTRACT_ADDRESS (AgriChainFinance)
+# - NEXT_PUBLIC_HARVEST_NFT_CONTRACT (HarvestTokenNFT)
 ```
 
 #### 6. Run Frontend
@@ -349,29 +468,55 @@ Or visit live demo: **[https://agrichains.xyz](https://agrichains.xyz)** 🎉
 
 ---
 
-## 📜 Smart Contract
+## 📜 Smart Contracts
 
-### Contract: `AgriChainFinance.sol`
+### Contract 1: AgriChainFinance (Main Contract)
 
-**Address (Testnet):** Check `frontend/.env.local`
+**Address (Testnet):** `0x2ad4F8805A205E16352B7EA81449Fbf5481437fA`  
+**Location:** `frontend/.env.local` → `NEXT_PUBLIC_CONTRACT_ADDRESS`
+
+**Functions:**
+- Create harvest tokens (legacy and from NFT)
+- Request loans
+- Handle investments from multiple investors
+- Manage repayments
+- Distribute profits to investors
+
+### Contract 2: HarvestTokenNFT (NFT Tracking Contract)
+
+**Address (Testnet):** `0xF1f3038178ba4cC4A5b5bB13D60655d5610c6eF2`  
+**Location:** `frontend/.env.local` → `NEXT_PUBLIC_HARVEST_NFT_CONTRACT`
+
+**Functions:**
+- Register NFTs created via Hedera SDK
+- Track NFT metadata
+- Verify NFT ownership
+- Deactivate/Reactivate NFTs (collateral management)
+
+### Contract Integration
+
+- `AgriChainFinance` uses `HarvestTokenNFT` contract reference
+- `AgriChainFinance` calls `HarvestTokenNFT` to verify NFT ownership
+- `HarvestTokenNFT` deactivates/reactivates NFT based on loan status
+- Both contracts deployed on Hedera Testnet
 
 ### Key Functions
 
 #### For Farmers
 
 ```solidity
-// Create harvest token (legacy)
+// Create harvest token from existing NFT (recommended)
+function createHarvestTokenFromNFT(
+    uint256 nftInternalId
+) external returns (uint256)
+
+// Create harvest token (legacy method)
 function createHarvestToken(
     address tokenAddress,
     string memory cropType,
     uint256 expectedYield,
     uint256 estimatedValue,
     uint256 harvestDate
-) external returns (uint256)
-
-// Create harvest token from existing NFT (new)
-function createHarvestTokenFromNFT(
-    uint256 nftInternalId
 ) external returns (uint256)
 
 // Request loan
@@ -402,10 +547,10 @@ POST /api/harvest-nft/create
 #### For Investors
 
 ```solidity
-// Invest in loan
+// Invest in loan (multiple investors can invest)
 function investInLoan(uint256 loanId) external payable
 
-// Withdraw profit
+// Withdraw profit (each investor withdraws independently)
 function withdrawInvestment(
     uint256 loanId,
     uint256 investmentIndex
@@ -625,8 +770,12 @@ npm test
    - Visit [Hedera Faucet](https://portal.hedera.com/faucet)
    - Request testnet HBAR
 
-2. **Deploy Contract**
+2. **Deploy Contracts**
    ```bash
+   # Deploy HarvestTokenNFT first
+   npm run deploy:nft:testnet
+   
+   # Then deploy AgriChainFinance
    npm run deploy:testnet
    ```
 
