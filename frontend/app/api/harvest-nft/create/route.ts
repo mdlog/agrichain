@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createHarvestNFT } from '@/lib/harvestNFT'
 import { saveNFT } from '@/lib/nftDatabase'
 import { ethers } from 'ethers'
+import { safeLogger, escapeHtml, validateEthereumAddress } from '@/lib/security'
 
 // Import contract ABIs
 const HarvestTokenNFTABI = require('@/contracts/HarvestTokenNFT.json')
@@ -51,6 +52,19 @@ export async function POST(request: NextRequest) {
             )
         }
 
+        // Validate Ethereum address format
+        if (!validateEthereumAddress(body.farmerAddress)) {
+            return NextResponse.json(
+                { success: false, error: 'Invalid farmer address format' },
+                { status: 400 }
+            )
+        }
+
+        // Sanitize string inputs to prevent XSS
+        body.cropType = escapeHtml(body.cropType)
+        body.farmLocation = escapeHtml(body.farmLocation)
+        body.farmerName = escapeHtml(body.farmerName)
+
         // Validate harvest date is in future
         const harvestDate = new Date(body.harvestDate)
         if (harvestDate <= new Date()) {
@@ -60,10 +74,10 @@ export async function POST(request: NextRequest) {
             )
         }
 
-        console.log('📝 Creating Harvest NFT...')
-        console.log('Farmer:', body.farmerAddress)
-        console.log('Crop:', body.cropType)
-        console.log('Value:', body.estimatedValue, 'HBAR')
+        safeLogger.log('📝 Creating Harvest NFT...')
+        safeLogger.log('Farmer:', body.farmerAddress)
+        safeLogger.log('Crop:', body.cropType)
+        safeLogger.log('Value:', body.estimatedValue, 'HBAR')
 
         // STEP 1: Create NFT on Hedera
         const nft = await createHarvestNFT(
@@ -80,10 +94,10 @@ export async function POST(request: NextRequest) {
             }
         )
 
-        console.log('✅ NFT Created:', nft.tokenId)
+        safeLogger.log('✅ NFT Created:', nft.tokenId)
 
         // STEP 2: Register NFT in smart contract
-        console.log('📝 Registering NFT in smart contract...')
+        safeLogger.log('📝 Registering NFT in smart contract...')
 
         const provider = new ethers.JsonRpcProvider(
             process.env.NEXT_PUBLIC_HEDERA_RPC_URL || 'https://testnet.hashio.io/api'
@@ -124,8 +138,8 @@ export async function POST(request: NextRequest) {
 
         const receipt = await tx.wait()
 
-        console.log('✅ NFT Registered in contract')
-        console.log('Transaction:', receipt.hash)
+        safeLogger.log('✅ NFT Registered in contract')
+        safeLogger.log('Transaction:', receipt.hash)
 
         // Extract internal ID from event
         let internalId = null
@@ -143,15 +157,15 @@ export async function POST(request: NextRequest) {
                 const parsedEvent = harvestNFTContract.interface.parseLog(registeredEvent)
                 if (parsedEvent) {
                     internalId = parsedEvent.args[0].toString() // First arg is internalId
-                    console.log('✅ Internal ID:', internalId)
+                    safeLogger.log('✅ Internal ID:', internalId)
                 }
             }
         } catch (error) {
-            console.warn('Could not extract internal ID from event:', error)
+            safeLogger.warn('Could not extract internal ID from event:', error)
         }
 
         // STEP 3: Save to database for online access
-        console.log('💾 Saving NFT to database...')
+        safeLogger.log('💾 Saving NFT to database...')
 
         const nftRecord = {
             id: `${nft.tokenId}-${nft.serialNumber}`,
@@ -175,7 +189,7 @@ export async function POST(request: NextRequest) {
         }
 
         saveNFT(nftRecord)
-        console.log('✅ NFT saved to database')
+        safeLogger.log('✅ NFT saved to database')
 
         // Return success response
         return NextResponse.json({
@@ -191,12 +205,12 @@ export async function POST(request: NextRequest) {
         })
 
     } catch (error: any) {
-        console.error('❌ Error creating harvest NFT:', error)
+        safeLogger.error('❌ Error creating harvest NFT:', error)
 
         return NextResponse.json(
             {
                 success: false,
-                error: error.message || 'Failed to create harvest NFT'
+                error: 'Failed to create harvest NFT'
             },
             { status: 500 }
         )

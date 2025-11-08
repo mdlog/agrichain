@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { Loader2, Wheat, Calendar, MapPin, TrendingUp } from 'lucide-react'
 import toast from 'react-hot-toast'
+import { getCSRFToken } from '@/lib/csrfClient'
 
 interface CreateHarvestNFTFormProps {
     farmerAddress: string
@@ -46,9 +47,20 @@ export default function CreateHarvestNFTForm({
         const loadingToast = toast.loading('Creating Harvest NFT on Hedera...')
 
         try {
+            // Get CSRF token (will fetch from API if not in cookie)
+            const csrfToken = await getCSRFToken()
+
+            console.log('🔐 CSRF Debug:')
+            console.log('  All cookies:', document.cookie)
+            console.log('  CSRF token:', csrfToken)
+            console.log('  Token length:', csrfToken.length)
+
             const response = await fetch('/api/harvest-nft/create', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                    'Content-Type': 'application/json',
+                    'x-csrf-token': csrfToken
+                },
                 body: JSON.stringify({
                     farmerAddress,
                     farmerName,
@@ -141,91 +153,91 @@ export default function CreateHarvestNFTForm({
 
                         {/* Cereals / Grains */}
                         <optgroup label="🌾 Cereals & Grains">
-                            <option value="Rice">Rice</option>
-                            <option value="Wheat">Wheat</option>
-                            <option value="Corn">Corn</option>
-                            <option value="Barley">Barley</option>
-                            <option value="Oats">Oats</option>
-                            <option value="Sorghum">Sorghum</option>
-                            <option value="Millet">Millet</option>
+                            <option value="Rice">Rice (Padi)</option>
+                            <option value="Wheat">Wheat (Gandum)</option>
+                            <option value="Corn">Corn (Jagung)</option>
+                            <option value="Barley">Barley (Jelai)</option>
+                            <option value="Oats">Oats (Oat)</option>
+                            <option value="Sorghum">Sorghum (Sorgum)</option>
+                            <option value="Millet">Millet (Milet)</option>
                         </optgroup>
 
                         {/* Legumes */}
                         <optgroup label="🫘 Legumes">
-                            <option value="Soybean">Soybean</option>
-                            <option value="Peanut">Peanut</option>
-                            <option value="Green Bean">Green Bean</option>
-                            <option value="Red Bean">Red Bean</option>
-                            <option value="Chickpea">Chickpea</option>
-                            <option value="Lentil">Lentil</option>
+                            <option value="Soybean">Soybean (Kedelai)</option>
+                            <option value="Peanut">Peanut (Kacang Tanah)</option>
+                            <option value="Green Bean">Green Bean (Kacang Hijau)</option>
+                            <option value="Red Bean">Red Bean (Kacang Merah)</option>
+                            <option value="Chickpea">Chickpea (Kacang Arab)</option>
+                            <option value="Lentil">Lentil (Lentil)</option>
                         </optgroup>
 
                         {/* Vegetables */}
                         <optgroup label="🥬 Vegetables">
-                            <option value="Tomato">Tomato</option>
-                            <option value="Potato">Potato</option>
-                            <option value="Onion">Onion</option>
-                            <option value="Garlic">Garlic</option>
-                            <option value="Cabbage">Cabbage</option>
-                            <option value="Carrot">Carrot</option>
-                            <option value="Chili">Chili</option>
-                            <option value="Eggplant">Eggplant</option>
-                            <option value="Cucumber">Cucumber</option>
-                            <option value="Lettuce">Lettuce</option>
+                            <option value="Tomato">Tomato (Tomat)</option>
+                            <option value="Potato">Potato (Kentang)</option>
+                            <option value="Onion">Onion (Bawang Merah)</option>
+                            <option value="Garlic">Garlic (Bawang Putih)</option>
+                            <option value="Cabbage">Cabbage (Kubis)</option>
+                            <option value="Carrot">Carrot (Wortel)</option>
+                            <option value="Chili">Chili (Cabai)</option>
+                            <option value="Eggplant">Eggplant (Terong)</option>
+                            <option value="Cucumber">Cucumber (Timun)</option>
+                            <option value="Lettuce">Lettuce (Selada)</option>
                         </optgroup>
 
                         {/* Fruits */}
                         <optgroup label="🍎 Fruits">
-                            <option value="Banana">Banana</option>
-                            <option value="Mango">Mango</option>
-                            <option value="Papaya">Papaya</option>
-                            <option value="Pineapple">Pineapple</option>
-                            <option value="Watermelon">Watermelon</option>
-                            <option value="Melon">Melon</option>
-                            <option value="Orange">Orange</option>
-                            <option value="Apple">Apple</option>
-                            <option value="Strawberry">Strawberry</option>
-                            <option value="Durian">Durian</option>
+                            <option value="Banana">Banana (Pisang)</option>
+                            <option value="Mango">Mango (Mangga)</option>
+                            <option value="Papaya">Papaya (Pepaya)</option>
+                            <option value="Pineapple">Pineapple (Nanas)</option>
+                            <option value="Watermelon">Watermelon (Semangka)</option>
+                            <option value="Melon">Melon (Melon)</option>
+                            <option value="Orange">Orange (Jeruk)</option>
+                            <option value="Apple">Apple (Apel)</option>
+                            <option value="Strawberry">Strawberry (Stroberi)</option>
+                            <option value="Durian">Durian (Durian)</option>
                         </optgroup>
 
                         {/* Cash Crops */}
                         <optgroup label="☕ Cash Crops">
-                            <option value="Coffee">Coffee</option>
-                            <option value="Cocoa">Cocoa</option>
-                            <option value="Tea">Tea</option>
-                            <option value="Rubber">Rubber</option>
-                            <option value="Palm Oil">Palm Oil</option>
-                            <option value="Sugarcane">Sugarcane</option>
-                            <option value="Cotton">Cotton</option>
-                            <option value="Tobacco">Tobacco</option>
+                            <option value="Coffee">Coffee (Kopi)</option>
+                            <option value="Cocoa">Cocoa (Kakao)</option>
+                            <option value="Tea">Tea (Teh)</option>
+                            <option value="Rubber">Rubber (Karet)</option>
+                            <option value="Palm Oil">Palm Oil (Kelapa Sawit)</option>
+                            <option value="Sugarcane">Sugarcane (Tebu)</option>
+                            <option value="Cotton">Cotton (Kapas)</option>
+                            <option value="Tobacco">Tobacco (Tembakau)</option>
                         </optgroup>
 
                         {/* Spices & Herbs */}
                         <optgroup label="🌿 Spices & Herbs">
-                            <option value="Black Pepper">Black Pepper</option>
-                            <option value="Ginger">Ginger</option>
-                            <option value="Turmeric">Turmeric</option>
-                            <option value="Galangal">Galangal</option>
-                            <option value="Lemongrass">Lemongrass</option>
-                            <option value="Vanilla">Vanilla</option>
-                            <option value="Cinnamon">Cinnamon</option>
-                            <option value="Clove">Clove</option>
-                            <option value="Nutmeg">Nutmeg</option>
+                            <option value="Black Pepper">Black Pepper (Lada Hitam)</option>
+                            <option value="Ginger">Ginger (Jahe)</option>
+                            <option value="Turmeric">Turmeric (Kunyit)</option>
+                            <option value="Galangal">Galangal (Lengkuas)</option>
+                            <option value="Lemongrass">Lemongrass (Serai)</option>
+                            <option value="Vanilla">Vanilla (Vanili)</option>
+                            <option value="Cinnamon">Cinnamon (Kayu Manis)</option>
+                            <option value="Clove">Clove (Cengkeh)</option>
+                            <option value="Nutmeg">Nutmeg (Pala)</option>
                         </optgroup>
 
                         {/* Root Crops */}
                         <optgroup label="🥔 Root Crops">
-                            <option value="Cassava">Cassava</option>
-                            <option value="Sweet Potato">Sweet Potato</option>
-                            <option value="Taro">Taro</option>
-                            <option value="Yam">Yam</option>
+                            <option value="Cassava">Cassava (Singkong)</option>
+                            <option value="Sweet Potato">Sweet Potato (Ubi Jalar)</option>
+                            <option value="Taro">Taro (Talas)</option>
+                            <option value="Yam">Yam (Ubi)</option>
                         </optgroup>
 
                         {/* Other */}
                         <optgroup label="🌱 Other">
-                            <option value="Mushroom">Mushroom</option>
-                            <option value="Bamboo">Bamboo</option>
-                            <option value="Other">Other</option>
+                            <option value="Mushroom">Mushroom (Jamur)</option>
+                            <option value="Bamboo">Bamboo (Bambu)</option>
+                            <option value="Other">Other (Lainnya)</option>
                         </optgroup>
                     </select>
                     <p className="text-xs text-gray-500 mt-1">Select the type of crop you're growing</p>

@@ -4,6 +4,11 @@ const CONTRACT_ADDRESS = process.env.NEXT_PUBLIC_CONTRACT_ADDRESS || ''
 
 // Full ABI dari smart contract
 const CONTRACT_ABI = [
+    // Public State Variables (auto-generated getters)
+    'function harvestTokenCounter() view returns (uint256)',
+    'function loanRequestCounter() view returns (uint256)',
+    'function totalValueLocked() view returns (uint256)',
+
     // View Functions
     'function harvestTokens(uint256) view returns (address tokenAddress, string cropType, uint256 expectedYield, uint256 estimatedValue, uint256 harvestDate, address farmer, bool isActive)',
     'function loanRequests(uint256) view returns (uint256 id, address farmer, uint256 harvestTokenId, uint256 requestedAmount, uint256 interestRate, uint256 duration, uint256 collateralValue, uint8 status, uint256 fundedAmount, uint256 createdAt)',
@@ -15,7 +20,6 @@ const CONTRACT_ABI = [
     'function getMaxLoanAmount(address farmer) view returns (uint256)',
     'function farmerVerifications(address) view returns (uint8 level, bytes32 documentHash, uint256 verifiedAt, address verifier, bool isActive)',
     'function levelMaxLoan(uint8) view returns (uint256)',
-    'function totalValueLocked() view returns (uint256)',
 
     // Ownable Functions
     'function owner() view returns (address)',

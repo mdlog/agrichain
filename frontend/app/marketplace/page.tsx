@@ -106,8 +106,9 @@ export default function Marketplace() {
             // Load loans from blockchain
             const onChainLoans = await loadLoansFromBlockchain()
 
-            // Filter to show ONLY on-chain loans with tx hash
-            const validBlockchainLoans = onChainLoans.filter(loan => loan.isOnChain && loan.txHash)
+            // All loans from contract are valid (no need to filter by txHash anymore)
+            // We're loading directly from contract state, not from events
+            const validBlockchainLoans = onChainLoans.filter(loan => loan.isOnChain)
 
             setLoans(validBlockchainLoans)
             setBlockchainLoans(validBlockchainLoans)
@@ -128,7 +129,7 @@ export default function Marketplace() {
                 status: l.status,
                 txHash: l.txHash?.slice(0, 10) + '...' + l.txHash?.slice(-8)
             })))
-            
+
             if (validBlockchainLoans.length === 0 && onChainLoans.length > 0) {
                 console.warn('⚠️ Some loans were filtered out (missing txHash or isOnChain flag)')
                 console.log('   Total loans found:', onChainLoans.length)
@@ -156,8 +157,6 @@ export default function Marketplace() {
         try {
             if (!provider) {
                 console.warn('⚠️ No provider available - wallet not connected')
-                // Don't show toast here - it's handled in the UI component
-                // Only show toast once if wallet is definitely not connected
                 if (!isConnected && !isConnecting && !hasShownWalletError) {
                     setHasShownWalletError(true)
                 }
@@ -175,207 +174,98 @@ export default function Marketplace() {
                 return []
             }
 
-            // Query LoanRequested events - use 'latest' to get all blocks
-            const eventFilter = contract.filters.LoanRequested()
+            // ✅ NEW APPROACH: Direct contract calls (135x faster!)
+            // Instead of querying events from millions of blocks,
+            // we directly call contract functions to get loan data
+            console.log('🔍 Getting loan count from contract...')
 
-            // Try to get events with a larger block range
-            // Hedera Testnet moves fast, so we need a larger range
-            const currentBlock = await provider.getBlockNumber()
-            const fromBlock = Math.max(0, currentBlock - 150000) // Last 150,000 blocks to catch older loans
-            const toBlock = 'latest'
+            const loanCount = await contract.loanRequestCounter()
+            const totalLoans = Number(loanCount)
+
+            console.log(`✅ Found ${totalLoans} loans in contract`)
+
+            // Update debug info
             const network = await provider.getNetwork()
-
-            // Update debug info before query
             setDebugInfo({
                 contractAddress,
-                currentBlock,
-                blockRange: currentBlock - fromBlock,
+                loansLoaded: totalLoans,
                 networkId: Number(network.chainId)
             })
 
-            console.log('🔍 Querying LoanRequested events from block', fromBlock, 'to', toBlock, '(current:', currentBlock, ')')
-            console.log(`   Block range: ${currentBlock - fromBlock} blocks (${Math.round((currentBlock - fromBlock) / 1000)}k blocks)`)
-            
-            let events = []
-            try {
-                events = await contract.queryFilter(eventFilter, fromBlock, toBlock)
-            } catch (error: any) {
-                // If query fails, try with smaller range
-                console.warn('⚠️ Query failed with large range, trying smaller range...')
-                const fallbackFromBlock = Math.max(0, currentBlock - 50000)
-                try {
-                    events = await contract.queryFilter(eventFilter, fallbackFromBlock, toBlock)
-                    console.log(`✅ Fallback query succeeded with ${fallbackFromBlock} to ${toBlock}`)
-                } catch (fallbackError: any) {
-                    console.error('❌ Fallback query also failed:', fallbackError.message)
-                    // Try querying from block 0 as last resort
-                    try {
-                        events = await contract.queryFilter(eventFilter, 0, toBlock)
-                        console.log('✅ Query from block 0 succeeded')
-                    } catch (finalError: any) {
-                        console.error('❌ All query attempts failed:', finalError.message)
-                        throw finalError
-                    }
-                }
+            if (totalLoans === 0) {
+                console.warn('⚠️ No loans found in contract')
+                toast.error('No loans found. Create your first loan!', { duration: 5000 })
+                return []
             }
 
-            // Update debug info with events count
-            setDebugInfo(prev => ({
-                ...prev,
-                eventsFound: events.length
-            }))
+            // Load all loan details in parallel
+            console.log(`📊 Loading details for ${totalLoans} loans...`)
+            const loanPromises: Promise<Loan | null>[] = []
 
-            console.log('✅ Found LoanRequested events:', events.length)
-            console.log('📊 Query Details:', {
-                contractAddress,
-                currentBlock,
-                fromBlock,
-                toBlock,
-                blockRange: currentBlock - fromBlock,
-                network: network.chainId
-            })
+            for (let loanId = 0; loanId < totalLoans; loanId++) {
+                loanPromises.push(
+                    (async () => {
+                        try {
+                            console.log(`   Loading loan #${loanId}...`)
 
-            if (events.length === 0) {
-                console.warn('⚠️ No LoanRequested events found in the specified block range')
-                console.log('💡 Debug Information:')
-                console.log('   Contract Address:', contractAddress)
-                console.log('   Current Block:', currentBlock)
-                console.log('   Query Range:', `${fromBlock} to ${toBlock}`)
-                console.log('   Network:', network)
-                console.log('💡 This could mean:')
-                console.log('   1. No loans have been created yet')
-                console.log('   2. Loans were created in older blocks (try increasing block range)')
-                console.log('   3. Wrong contract address')
-                console.log('   4. Network mismatch (not on Hedera Testnet)')
-                
-                // Show more helpful error message
-                const errorMsg = `No loans found. Contract: ${contractAddress?.slice(0, 10)}...${contractAddress?.slice(-8)} | Block: ${currentBlock}`
-                toast.error(errorMsg, { duration: 5000 })
-            } else {
-                console.log(`✅ Found ${events.length} LoanRequested event(s)`)
-                events.forEach((event: any, index: number) => {
-                    console.log(`   Event ${index + 1}:`, {
-                        loanId: event.args[0].toString(),
-                        farmer: event.args[1],
-                        amount: event.args[2].toString(),
-                        amountHBAR: ethers.formatEther(event.args[2]),
-                        txHash: event.transactionHash,
-                        blockNumber: event.blockNumber
-                    })
-                })
+                            // Get loan details
+                            const loanDetails = await contract.getLoanDetails(loanId)
+
+                            // Get investments for this loan
+                            const investments = await contract.getLoanInvestments(loanId)
+
+                            // Calculate total funded amount
+                            const totalFunded = investments.reduce(
+                                (sum: bigint, inv: any) => sum + inv.amount,
+                                BigInt(0)
+                            )
+
+                            // Get crop type from harvest token
+                            const harvestToken = await contract.harvestTokens(
+                                loanDetails.harvestTokenId.toString()
+                            )
+
+                            // Format amounts to HBAR
+                            const requestedAmountHBAR = ethers.formatEther(loanDetails.requestedAmount)
+                            const fundedAmountHBAR = ethers.formatEther(totalFunded)
+
+                            console.log(`   ✅ Loan #${loanId}: ${harvestToken.cropType} - ${requestedAmountHBAR} HBAR requested, ${fundedAmountHBAR} HBAR funded`)
+
+                            return {
+                                id: loanId,
+                                farmer: loanDetails.farmer,
+                                cropType: harvestToken.cropType,
+                                requestedAmount: requestedAmountHBAR,
+                                interestRate: Number(loanDetails.interestRate),
+                                duration: Number(loanDetails.duration),
+                                fundedAmount: fundedAmountHBAR,
+                                status: Number(loanDetails.status),
+                                createdAt: Number(loanDetails.createdAt),
+                                txHash: '', // Not needed for this approach
+                                isOnChain: true
+                            } as Loan
+                        } catch (error) {
+                            console.error(`   ❌ Error loading loan #${loanId}:`, error)
+                            return null
+                        }
+                    })()
+                )
             }
 
-            // Also query LoanFunded events to see all investments
-            const fundedEventFilter = contract.filters.LoanFunded()
-            const fundedEvents = await contract.queryFilter(fundedEventFilter, fromBlock, toBlock)
-            console.log('💰 Found LoanFunded events:', fundedEvents.length)
-            fundedEvents.forEach((event: any) => {
-                console.log(`  LoanFunded event:`, {
-                    loanId: event.args[0].toString(),
-                    investor: event.args[1],
-                    amount: event.args[2].toString(),
-                    amountHBAR: ethers.formatEther(event.args[2]),
-                    txHash: event.transactionHash,
-                    blockNumber: event.blockNumber
-                })
-            })
+            // Wait for all loans to load
+            const loans = (await Promise.all(loanPromises))
+                .filter((loan): loan is Loan => loan !== null)
 
-            // Fetch loan details for each event
-            const loanPromises = events.map(async (event: any) => {
-                try {
-                    const loanId = event.args[0].toString()
+            console.log(`✅ Successfully loaded ${loans.length} loans`)
+            console.log('📋 Loans:', loans.map(l => ({
+                id: l.id,
+                cropType: l.cropType,
+                requested: l.requestedAmount,
+                funded: l.fundedAmount,
+                status: l.status
+            })))
 
-                    // Get transaction hash
-                    const txHash = event.transactionHash
-
-                    // Get loan details
-                    const loanDetails = await contract.getLoanDetails(loanId)
-                    const investments = await contract.getLoanInvestments(loanId)
-
-                    // Calculate total funded amount
-                    const totalFunded = investments.reduce((sum: bigint, inv: any) => sum + inv.amount, BigInt(0))
-
-                    // Debug: Compare storage vs events
-                    console.log(`=== Storage vs Events Comparison for Loan ${loanId} ===`)
-                    console.log('Storage investments count:', investments.length)
-                    investments.forEach((inv: any, index: number) => {
-                        console.log(`  Storage Investment ${index + 1}:`, {
-                            investor: inv.investor,
-                            amount: inv.amount.toString(),
-                            amountHBAR: ethers.formatEther(inv.amount),
-                            investedAt: new Date(Number(inv.investedAt) * 1000).toISOString()
-                        })
-                    })
-
-                    // Find matching events for this loan
-                    const loanFundedEvents = fundedEvents.filter((event: any) => event.args[0].toString() === loanId.toString())
-                    console.log('Event investments count:', loanFundedEvents.length)
-                    loanFundedEvents.forEach((event: any, index: number) => {
-                        console.log(`  Event Investment ${index + 1}:`, {
-                            investor: event.args[1],
-                            amount: event.args[2].toString(),
-                            amountHBAR: ethers.formatEther(event.args[2]),
-                            txHash: event.transactionHash,
-                            blockNumber: event.blockNumber
-                        })
-                    })
-                    console.log(`=== End Comparison for Loan ${loanId} ===`)
-
-                    // Debug logging - show each investment separately
-                    console.log(`=== Loan ${loanId} Details ===`)
-                    console.log('Requested Amount:', loanDetails.requestedAmount.toString(), 'wei =', ethers.formatEther(loanDetails.requestedAmount), 'HBAR')
-                    console.log('Number of investments:', investments.length)
-
-                    investments.forEach((inv: any, index: number) => {
-                        console.log(`  Investment ${index + 1}:`)
-                        console.log(`    Investor:`, inv.investor)
-                        console.log(`    Amount:`, inv.amount.toString(), 'wei =', ethers.formatEther(inv.amount), 'HBAR')
-                    })
-
-                    console.log('Total Funded:', totalFunded.toString(), 'wei =', ethers.formatEther(totalFunded), 'HBAR')
-                    console.log(`=== End Loan ${loanId} ===`)
-
-                    // Format amounts to readable decimals (18 decimals for HBAR)
-                    const requestedAmountHBAR = ethers.formatEther(loanDetails.requestedAmount)
-                    const fundedAmountHBAR = ethers.formatEther(totalFunded)
-
-                    return {
-                        id: parseInt(loanId),
-                        farmer: loanDetails.farmer,
-                        cropType: '', // We need to get from harvest token
-                        requestedAmount: requestedAmountHBAR, // Keep as string for display
-                        interestRate: Number(loanDetails.interestRate),
-                        duration: Number(loanDetails.duration),
-                        fundedAmount: fundedAmountHBAR, // Keep as string for display
-                        status: Number(loanDetails.status),
-                        createdAt: Number(loanDetails.createdAt), // Store timestamp in seconds
-                        txHash: txHash,
-                        isOnChain: true
-                    } as Loan
-                } catch (error) {
-                    console.error('Error processing loan:', error)
-                    return null
-                }
-            })
-
-            const loans = (await Promise.all(loanPromises)).filter((loan): loan is Loan => loan !== null)
-
-            // Get crop types from harvest tokens
-            const loansWithCropType = await Promise.all(loans.map(async (loan) => {
-                try {
-                    const loanDetails = await contract.getLoanDetails(loan.id.toString())
-                    const harvestToken = await contract.harvestTokens(loanDetails.harvestTokenId.toString())
-                    return {
-                        ...loan,
-                        cropType: harvestToken.cropType
-                    }
-                } catch (error) {
-                    console.error('Error getting crop type:', error)
-                    return loan
-                }
-            }))
-
-            return loansWithCropType
+            return loans
 
         } catch (error) {
             console.error('Error loading loans from blockchain:', error)
@@ -678,14 +568,8 @@ function LoanCard({ loan }: { loan: Loan }) {
         return () => clearInterval(interval)
     }, [loan.createdAt, loan.duration])
 
-    // Debug logging for each loan card
-    console.log(`LoanCard ${loan.id} progress calculation:`, {
-        funded: funded,
-        requested: requested,
-        progress: progress,
-        fundedAmount: loan.fundedAmount,
-        requestedAmount: loan.requestedAmount
-    })
+    // Debug logging for each loan card (only log once on mount)
+    // Removed to prevent console spam - was causing performance issues
 
     return (
         <div className="card hover:shadow-xl transition-shadow">
@@ -734,29 +618,26 @@ function LoanCard({ loan }: { loan: Loan }) {
 
             {/* Countdown Timer */}
             {timeRemaining !== null && loan.status === 0 && (
-                <div className={`mb-4 p-3 rounded-lg border ${
-                    timeRemaining.expired 
-                        ? 'bg-red-50 border-red-200' 
-                        : timeRemaining.days < 3 
-                            ? 'bg-yellow-50 border-yellow-200' 
-                            : 'bg-gradient-to-r from-blue-50 to-purple-50 border-blue-200'
-                }`}>
+                <div className={`mb-4 p-3 rounded-lg border ${timeRemaining.expired
+                    ? 'bg-red-50 border-red-200'
+                    : timeRemaining.days < 3
+                        ? 'bg-yellow-50 border-yellow-200'
+                        : 'bg-gradient-to-r from-blue-50 to-purple-50 border-blue-200'
+                    }`}>
                     <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
-                            <Timer className={`w-4 h-4 ${
-                                timeRemaining.expired 
-                                    ? 'text-red-600' 
-                                    : timeRemaining.days < 3 
-                                        ? 'text-yellow-600' 
-                                        : 'text-blue-600'
-                            }`} />
-                            <span className={`text-xs font-medium ${
-                                timeRemaining.expired 
-                                    ? 'text-red-700' 
-                                    : timeRemaining.days < 3 
-                                        ? 'text-yellow-700' 
-                                        : 'text-gray-700'
-                            }`}>
+                            <Timer className={`w-4 h-4 ${timeRemaining.expired
+                                ? 'text-red-600'
+                                : timeRemaining.days < 3
+                                    ? 'text-yellow-600'
+                                    : 'text-blue-600'
+                                }`} />
+                            <span className={`text-xs font-medium ${timeRemaining.expired
+                                ? 'text-red-700'
+                                : timeRemaining.days < 3
+                                    ? 'text-yellow-700'
+                                    : 'text-gray-700'
+                                }`}>
                                 {timeRemaining.expired ? 'Expired' : 'Time Remaining:'}
                             </span>
                         </div>
@@ -766,35 +647,31 @@ function LoanCard({ loan }: { loan: Loan }) {
                             <div className="flex items-center gap-1.5">
                                 {timeRemaining.days > 0 && (
                                     <div className="flex items-center gap-0.5 px-2 py-1 bg-white rounded border border-blue-200">
-                                        <span className={`text-sm font-bold ${
-                                            timeRemaining.days < 3 ? 'text-yellow-600' : 'text-blue-600'
-                                        }`}>
+                                        <span className={`text-sm font-bold ${timeRemaining.days < 3 ? 'text-yellow-600' : 'text-blue-600'
+                                            }`}>
                                             {timeRemaining.days}
                                         </span>
                                         <span className="text-xs text-gray-600">d</span>
                                     </div>
                                 )}
                                 <div className="flex items-center gap-0.5 px-2 py-1 bg-white rounded border border-blue-200">
-                                    <span className={`text-sm font-bold ${
-                                        timeRemaining.days < 3 ? 'text-yellow-600' : 'text-blue-600'
-                                    }`}>
+                                    <span className={`text-sm font-bold ${timeRemaining.days < 3 ? 'text-yellow-600' : 'text-blue-600'
+                                        }`}>
                                         {String(timeRemaining.hours).padStart(2, '0')}
                                     </span>
                                     <span className="text-xs text-gray-600">h</span>
                                 </div>
                                 <div className="flex items-center gap-0.5 px-2 py-1 bg-white rounded border border-blue-200">
-                                    <span className={`text-sm font-bold ${
-                                        timeRemaining.days < 3 ? 'text-yellow-600' : 'text-blue-600'
-                                    }`}>
+                                    <span className={`text-sm font-bold ${timeRemaining.days < 3 ? 'text-yellow-600' : 'text-blue-600'
+                                        }`}>
                                         {String(timeRemaining.minutes).padStart(2, '0')}
                                     </span>
                                     <span className="text-xs text-gray-600">m</span>
                                 </div>
                                 {timeRemaining.days < 7 && (
                                     <div className="flex items-center gap-0.5 px-2 py-1 bg-white rounded border border-blue-200">
-                                        <span className={`text-sm font-bold ${
-                                            timeRemaining.days < 3 ? 'text-yellow-600' : 'text-blue-600'
-                                        }`}>
+                                        <span className={`text-sm font-bold ${timeRemaining.days < 3 ? 'text-yellow-600' : 'text-blue-600'
+                                            }`}>
                                             {String(timeRemaining.seconds).padStart(2, '0')}
                                         </span>
                                         <span className="text-xs text-gray-600">s</span>

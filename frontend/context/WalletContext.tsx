@@ -13,7 +13,7 @@ interface WalletContextType {
     isConnected: boolean
     isConnecting: boolean
     chainId: number | null
-    connectWallet: () => Promise<void>
+    connectWallet: () => void
     disconnectWallet: () => void
 }
 
@@ -24,7 +24,7 @@ const WalletContext = createContext<WalletContextType>({
     isConnected: false,
     isConnecting: false,
     chainId: null,
-    connectWallet: async () => { },
+    connectWallet: () => { },
     disconnectWallet: () => { },
 })
 
@@ -36,8 +36,8 @@ export function WalletProvider({ children }: { children: ReactNode }) {
 
     const [provider, setProvider] = useState<BrowserProvider | null>(null)
     const [signer, setSigner] = useState<JsonRpcSigner | null>(null)
-    const [isConnecting, setIsConnecting] = useState(false)
 
+    // Setup ethers provider when wallet connects
     useEffect(() => {
         const setupProvider = async () => {
             if (walletClient && isConnected && address) {
@@ -48,6 +48,8 @@ export function WalletProvider({ children }: { children: ReactNode }) {
                     setSigner(ethersSigner)
                 } catch (error) {
                     console.error('Error setting up provider:', error)
+                    setProvider(null)
+                    setSigner(null)
                 }
             } else {
                 setProvider(null)
@@ -55,32 +57,41 @@ export function WalletProvider({ children }: { children: ReactNode }) {
             }
         }
         setupProvider()
-    }, [walletClient, isConnected, address, chain])
+    }, [walletClient, isConnected, address])
 
-    const connectWallet = async () => {
-        try {
-            setIsConnecting(true)
-            if (openConnectModal) openConnectModal()
-        } catch (error: any) {
-            toast.error('Failed to connect wallet')
-        } finally {
-            setIsConnecting(false)
+    const connectWallet = () => {
+        if (openConnectModal) {
+            openConnectModal()
+        } else {
+            toast.error('Connect modal not available')
         }
     }
 
-    const disconnectWallet = async () => {
+    const disconnectWallet = () => {
         try {
             disconnect()
             setProvider(null)
             setSigner(null)
             toast.success('Wallet disconnected')
         } catch (error) {
+            console.error('Disconnect error:', error)
             toast.error('Failed to disconnect wallet')
         }
     }
 
     return (
-        <WalletContext.Provider value={{ account: address || null, provider, signer, isConnected, isConnecting, chainId: chain?.id || null, connectWallet, disconnectWallet }}>
+        <WalletContext.Provider
+            value={{
+                account: address || null,
+                provider,
+                signer,
+                isConnected,
+                isConnecting: false,
+                chainId: chain?.id || null,
+                connectWallet,
+                disconnectWallet
+            }}
+        >
             {children}
         </WalletContext.Provider>
     )

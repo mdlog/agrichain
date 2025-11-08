@@ -1,8 +1,9 @@
+import '@rainbow-me/rainbowkit/styles.css'
 import { getDefaultConfig } from '@rainbow-me/rainbowkit'
-import { Chain } from 'wagmi/chains'
+import { defineChain } from 'viem'
 
 // Define Hedera Testnet
-export const hederaTestnet: Chain = {
+export const hederaTestnet = defineChain({
     id: 296,
     name: 'Hedera Testnet',
     nativeCurrency: {
@@ -12,16 +13,7 @@ export const hederaTestnet: Chain = {
     },
     rpcUrls: {
         default: {
-            http: [
-                'https://testnet.hashio.io/api',
-                'https://testnet.hedera.com',
-            ],
-        },
-        public: {
-            http: [
-                'https://testnet.hashio.io/api',
-                'https://testnet.hedera.com',
-            ],
+            http: ['https://testnet.hashio.io/api'],
         },
     },
     blockExplorers: {
@@ -31,10 +23,10 @@ export const hederaTestnet: Chain = {
         },
     },
     testnet: true,
-}
+})
 
 // Define Hedera Mainnet
-export const hederaMainnet: Chain = {
+export const hederaMainnet = defineChain({
     id: 295,
     name: 'Hedera Mainnet',
     nativeCurrency: {
@@ -54,22 +46,20 @@ export const hederaMainnet: Chain = {
         },
     },
     testnet: false,
-}
+})
 
-// Validate project ID
-const projectId = process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID
+// Get WalletConnect Project ID
+const projectId = process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID || ''
 
-if (!projectId || projectId === 'placeholder_walletconnect_project_id' || projectId === '') {
-    console.warn('⚠️  WalletConnect Project ID not set. Please get one from: https://cloud.walletconnect.com/')
-    console.warn('⚠️  Using demo project ID - wallet connection may not work properly')
+if (!projectId || projectId === 'your_project_id_here') {
+    console.warn('⚠️  WalletConnect Project ID not configured!')
+    console.warn('⚠️  Get your free Project ID from: https://cloud.walletconnect.com/')
+    console.warn('⚠️  Add to .env: NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID=your_id')
 }
 
 export const config = getDefaultConfig({
     appName: 'AgriChain Finance',
-    // Use demo project ID if not provided (for development only)
-    projectId: projectId && projectId !== 'placeholder_walletconnect_project_id'
-        ? projectId
-        : 'demo_project_id_for_development_only',
+    projectId: projectId || '2c5e8c4f8b3a9d1e6f7c8b9a0d1e2f3a',
     chains: [hederaTestnet, hederaMainnet],
     ssr: true,
 })

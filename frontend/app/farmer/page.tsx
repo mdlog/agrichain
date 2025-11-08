@@ -2,15 +2,16 @@
 
 import { useState, useEffect } from 'react'
 import { useWallet } from '@/context/WalletContext'
-import { Sprout, Plus, List, TrendingUp, DollarSign, Calendar, Package, AlertCircle, CheckCircle2, Clock, Shield, Lock, ExternalLink, Wheat, X } from 'lucide-react'
+import { Sprout, Plus, List, TrendingUp, DollarSign, Package, AlertCircle, CheckCircle2, Clock, Shield, Lock, ExternalLink, Wheat, X } from 'lucide-react'
 import Link from 'next/link'
 import toast from 'react-hot-toast'
 import { getVerificationLevel } from '@/lib/verificationLevels'
 import { getContract } from '@/lib/contract'
 import { ethers } from 'ethers'
-import { hbarToWei, hbarToTinybar, tinybarToHBAR, weiToHBAR, debugHBARTransaction, validateHBARAmount, formatHBARNumber } from '@/lib/hbarUtils'
+import { hbarToWei, debugHBARTransaction, validateHBARAmount } from '@/lib/hbarUtils'
 import CreateHarvestNFTForm from '@/components/CreateHarvestNFTForm'
 import MyHarvestNFTs from '@/components/MyHarvestNFTs'
+
 
 interface CreatedLoan {
     id: number
@@ -29,12 +30,10 @@ interface CreatedLoan {
 
 export default function FarmerDashboard() {
     const { account, connectWallet, signer, provider } = useWallet()
-    const [activeTab, setActiveTab] = useState<'create' | 'nfts'>('create')
-    const [showNewLoanToast, setShowNewLoanToast] = useState(false)
-    const [selectedNFTForLoan, setSelectedNFTForLoan] = useState<any>(null)
-    const [farmerName, setFarmerName] = useState('Farmer')
+    const [activeTab, setActiveTab] = useState<'nft' | 'create' | 'loans'>('nft')
     const [isSubmitting, setIsSubmitting] = useState(false)
     const [blockchainLoans, setBlockchainLoans] = useState<any[]>([])
+    const [selectedNFTForLoan, setSelectedNFTForLoan] = useState<any>(null)
 
     // Stats from blockchain
     const [totalRequested, setTotalRequested] = useState<string>('0')
@@ -42,34 +41,34 @@ export default function FarmerDashboard() {
     const [activeLoansCount, setActiveLoansCount] = useState<number>(0)
     const [completedLoansCount, setCompletedLoansCount] = useState<number>(0)
 
-    // Load created loans from localStorage
+    // Load created loans from localStorage (only on-chain loans)
     const [farmerLoans, setFarmerLoans] = useState<CreatedLoan[]>(() => {
         if (typeof window !== 'undefined') {
-            // Check if using new contract - clear old data
-            const currentContract = process.env.NEXT_PUBLIC_CONTRACT_ADDRESS
-            const savedContract = localStorage.getItem('lastContractAddress')
-
-            if (currentContract && savedContract && currentContract !== savedContract) {
-                // New contract detected - clear old data
-                console.log('🔄 New contract detected, clearing old localStorage data')
-                localStorage.removeItem('farmerCreatedLoans')
-                localStorage.removeItem('marketplaceLoans')
-                localStorage.setItem('lastContractAddress', currentContract)
-                return []
-            }
-
-            if (currentContract) {
-                localStorage.setItem('lastContractAddress', currentContract)
-            }
-
             const saved = localStorage.getItem('farmerCreatedLoans')
-            return saved ? JSON.parse(saved) : []
+            if (saved) {
+                const allLoans = JSON.parse(saved)
+                // Filter only on-chain loans
+                const onChainLoans = allLoans.filter((loan: CreatedLoan) => loan.isOnChain && loan.txHash)
+
+                // Remove duplicates based on loan ID
+                const uniqueLoans = onChainLoans.reduce((acc: CreatedLoan[], current: CreatedLoan) => {
+                    const exists = acc.find(loan => loan.id === current.id)
+                    if (!exists) {
+                        acc.push(current)
+                    }
+                    return acc
+                }, [])
+
+                // Save back filtered and deduplicated loans
+                localStorage.setItem('farmerCreatedLoans', JSON.stringify(uniqueLoans))
+                return uniqueLoans
+            }
         }
         return []
     })
 
     // Function to add new loan
-    const addLoanToHistory = async (loanData: Omit<CreatedLoan, 'id' | 'createdAt'>, nftData?: any) => {
+    const addLoanToHistory = async (loanData: Omit<CreatedLoan, 'id' | 'createdAt'>, nftInternalId?: number) => {
         if (!signer) {
             toast.error('Please connect your wallet first')
             return
@@ -85,110 +84,117 @@ export default function FarmerDashboard() {
                 throw new Error('Contract address not configured. Please set NEXT_PUBLIC_CONTRACT_ADDRESS in .env.local')
             }
 
-            // Validate amounts before sending
-            const estimatedValueValidation = validateHBARAmount(loanData.estimatedValue, 1, 10000000)
-            if (estimatedValueValidation) {
-                throw new Error(`Invalid estimated value: ${estimatedValueValidation}`)
-            }
+            let harvestTokenId: any
 
+            // Validate loan amount
             const loanAmountValidation = validateHBARAmount(loanData.loanAmount, 1, 1000000)
             if (loanAmountValidation) {
                 throw new Error(`Invalid loan amount: ${loanAmountValidation}`)
             }
 
-            let harvestTokenId: bigint
+            // Check if using NFT or creating new token
+            if (nftInternalId) {
+                // ✅ NEW: Use existing NFT as collateral
+                console.log('Using NFT Internal ID:', nftInternalId)
+                console.log('🔍 HarvestTokenNFT Contract:', process.env.NEXT_PUBLIC_HARVEST_NFT_CONTRACT)
+                console.log('🔍 AgriChain Contract:', process.env.NEXT_PUBLIC_CONTRACT_ADDRESS)
 
-            // If NFT is provided, use createHarvestTokenFromNFT
-            if (nftData?.internalId) {
-                const loadingToast1 = toast.loading('Step 1/2: Creating harvest token from NFT...')
-                
+                // Validate NFT exists and is active before submitting
+                // Note: Validation is optional due to Hedera view function gas issues
+                const loadingToast0 = toast.loading('Validating NFT...')
                 try {
-                    // Call createHarvestTokenFromNFT with internal ID
-                    const createTokenTx = await contract.createHarvestTokenFromNFT(
-                        BigInt(nftData.internalId)
+                    // Try to get NFT data from HarvestTokenNFT contract
+                    const harvestNFTContract = new ethers.Contract(
+                        process.env.NEXT_PUBLIC_HARVEST_NFT_CONTRACT || '',
+                        [
+                            'function getHarvestNFT(uint256) view returns (tuple(string cropType, uint256 expectedYield, uint256 estimatedValue, uint256 harvestDate, string farmLocation, uint256 farmSize, address farmer, uint256 createdAt, bool isActive))',
+                            'function isNFTOwner(uint256, address) view returns (bool)'
+                        ],
+                        signer
                     )
-                    
-                    const createTokenReceipt = await createTokenTx.wait()
-                    
-                    // Dismiss loading toast
-                    toast.dismiss(loadingToast1)
-                    toast.success('Harvest token created from NFT!')
-                    
-                    // Extract token ID from event
-                    const tokenCreatedEvent = createTokenReceipt.logs.find((log: any) => {
-                        try {
-                            const parsed = contract.interface.parseLog(log)
-                            return parsed && parsed.name === 'HarvestTokenCreated'
-                        } catch {
-                            return false
-                        }
+
+                    const nftData = await harvestNFTContract.getHarvestNFT(nftInternalId)
+                    console.log('✅ NFT Data retrieved:', {
+                        cropType: nftData.cropType,
+                        farmer: nftData.farmer,
+                        isActive: nftData.isActive
                     })
-                    
-                    if (!tokenCreatedEvent) {
-                        throw new Error('Failed to get harvest token ID from event')
+
+                    if (!nftData.isActive) {
+                        toast.dismiss(loadingToast0)
+                        throw new Error('This NFT is already being used as collateral for another loan. Please select a different NFT or create a new one.')
                     }
-                    
-                    const parsedEvent = contract.interface.parseLog(tokenCreatedEvent)
-                    if (!parsedEvent) {
-                        throw new Error('Failed to parse harvest token event')
+
+                    if (nftData.farmer.toLowerCase() !== account?.toLowerCase()) {
+                        toast.dismiss(loadingToast0)
+                        throw new Error('You are not the owner of this NFT.')
                     }
-                    
-                    harvestTokenId = parsedEvent.args[0]
-                    
+
+                    toast.dismiss(loadingToast0)
+                    toast.success('NFT validated!')
                 } catch (error: any) {
-                    toast.dismiss(loadingToast1)
-                    // If NFT creation fails, fall back to legacy method
-                    console.warn('Failed to create token from NFT, falling back to legacy method:', error)
-                    toast.error('NFT creation failed. Using legacy method instead.')
-                    
-                    // Fall through to legacy createHarvestToken
-                    const harvestDate = Math.floor(new Date(loanData.harvestDate).getTime() / 1000)
-                    const loadingToastLegacy = toast.loading('Creating harvest token on blockchain...')
-                    
-                    const estimatedValueWei = hbarToWei(loanData.estimatedValue)
-                    const mockTokenAddress = '0x0000000000000000000000000000000000000001'
-                    
-                    const createTokenTx = await contract.createHarvestToken(
-                        mockTokenAddress,
-                        loanData.cropType,
-                        ethers.parseUnits(loanData.expectedYield, 0),
-                        estimatedValueWei,
-                        harvestDate
-                    )
-                    
-                    const createTokenReceipt = await createTokenTx.wait()
-                    toast.dismiss(loadingToastLegacy)
-                    
-                    const tokenCreatedEvent = createTokenReceipt.logs.find((log: any) => {
-                        try {
-                            const parsed = contract.interface.parseLog(log)
-                            return parsed && parsed.name === 'HarvestTokenCreated'
-                        } catch {
-                            return false
-                        }
-                    })
-                    
-                    if (!tokenCreatedEvent) {
-                        throw new Error('Failed to get harvest token ID from event')
+                    toast.dismiss(loadingToast0)
+                    console.error('❌ NFT Validation Error:', error)
+
+                    // If it's a critical error (ownership/active status), throw it
+                    if (error.message.includes('already being used') || error.message.includes('not the owner')) {
+                        throw error
                     }
-                    
-                    const parsedEvent = contract.interface.parseLog(tokenCreatedEvent)
-                    if (!parsedEvent) {
-                        throw new Error('Failed to parse harvest token event')
-                    }
-                    
-                    harvestTokenId = parsedEvent.args[0]
+
+                    // For other errors (like INSUFFICIENT_PAYER_BALANCE), just warn and continue
+                    console.warn('⚠️ Skipping validation due to error. Will validate during transaction.')
+                    toast.success('Proceeding with loan request...')
                 }
+
+                const loadingToast1 = toast.loading('Step 1/2: Converting NFT to harvest token...')
+
+                console.log('🔄 Calling createHarvestTokenFromNFT with ID:', nftInternalId)
+                const createTokenTx = await contract.createHarvestTokenFromNFT(nftInternalId)
+                console.log('📝 Transaction sent:', createTokenTx.hash)
+
+                const createTokenReceipt = await createTokenTx.wait()
+                console.log('✅ Transaction confirmed:', createTokenReceipt.hash)
+
+                toast.dismiss(loadingToast1)
+                toast.success('NFT converted to harvest token!')
+
+                // Extract token ID from event
+                const tokenCreatedEvent = createTokenReceipt.logs.find((log: any) => {
+                    try {
+                        const parsed = contract.interface.parseLog(log)
+                        return parsed && parsed.name === 'HarvestTokenCreated'
+                    } catch {
+                        return false
+                    }
+                })
+
+                if (!tokenCreatedEvent) {
+                    throw new Error('Failed to get harvest token ID from event')
+                }
+
+                const parsedEvent = contract.interface.parseLog(tokenCreatedEvent)
+                if (!parsedEvent) {
+                    throw new Error('Failed to parse harvest token event')
+                }
+
+                harvestTokenId = parsedEvent.args[0]
+
             } else {
-                // Step 1: Create harvest token (legacy method)
+                // ❌ OLD: Create new harvest token (legacy method)
+                const mockTokenAddress = '0x0000000000000000000000000000000000000001'
+                const harvestDate = Math.floor(new Date(loanData.harvestDate).getTime() / 1000)
+
                 const loadingToast1 = toast.loading('Step 1/2: Creating harvest token on blockchain...')
 
-                const harvestDate = Math.floor(new Date(loanData.harvestDate).getTime() / 1000)
-                const estimatedValueWei = hbarToWei(loanData.estimatedValue)
-                console.log('Creating harvest token with estimated value:', loanData.estimatedValue, 'HBAR =', estimatedValueWei.toString(), 'wei')
+                // Validate amounts before sending
+                const estimatedValueValidation = validateHBARAmount(loanData.estimatedValue, 1, 10000000)
+                if (estimatedValueValidation) {
+                    throw new Error(`Invalid estimated value: ${estimatedValueValidation}`)
+                }
 
-                // Use placeholder token address (in production, would create actual HTS token)
-                const mockTokenAddress = '0x0000000000000000000000000000000000000001'
+                // Convert HBAR to wei using utility function
+                const estimatedValueWei = hbarToWei(loanData.estimatedValue)
+                debugHBARTransaction('Estimated Value', loanData.estimatedValue, estimatedValueWei)
 
                 const createTokenTx = await contract.createHarvestToken(
                     mockTokenAddress, // token address
@@ -200,7 +206,6 @@ export default function FarmerDashboard() {
 
                 const createTokenReceipt = await createTokenTx.wait()
 
-                // Dismiss loading toast
                 toast.dismiss(loadingToast1)
                 toast.success('Harvest token created!')
 
@@ -229,21 +234,17 @@ export default function FarmerDashboard() {
             // Step 2: Request loan
             const loadingToast2 = toast.loading('Step 2/2: Requesting loan on blockchain...')
 
-            // Convert loan amount to wei (for internal storage in smart contract)
+            // Convert loan amount to wei using utility function
             const loanAmountWei = hbarToWei(loanData.loanAmount)
-            
-            // Convert interest rate to basis points (e.g., 5% = 500 basis points)
-            const interestRateBasisPoints = BigInt(Math.floor(parseFloat(loanData.interestRate) * 100))
-            
-            console.log('Requesting loan with amount:', loanData.loanAmount, 'HBAR =', loanAmountWei.toString(), 'wei')
-            console.log('Harvest token ID:', harvestTokenId.toString())
-            console.log('Interest rate:', loanData.interestRate, '% =', interestRateBasisPoints.toString(), 'basis points')
-            console.log('Duration:', loanData.duration, 'days')
+            debugHBARTransaction('Loan Amount', loanData.loanAmount, loanAmountWei)
+
+            // Convert interest rate from percentage to basis points (5% = 500 basis points)
+            const interestRateBasisPoints = Math.floor(parseFloat(loanData.interestRate) * 100)
 
             const requestLoanTx = await contract.requestLoan(
-                harvestTokenId, // harvest token ID (from NFT or newly created)
+                harvestTokenId, // harvest token ID from step 1
                 loanAmountWei, // loan amount in HBAR wei (18 decimals)
-                interestRateBasisPoints, // interest rate in basis points (500 = 5%)
+                interestRateBasisPoints, // interest rate in basis points (e.g., 500 = 5%)
                 ethers.parseUnits(loanData.duration, 0) // duration in days
             )
 
@@ -307,7 +308,7 @@ export default function FarmerDashboard() {
                     farmerName: 'You',
                     cropType: newLoan.cropType,
                     requestedAmount: newLoan.loanAmount,
-                    interestRate: parseInt(newLoan.interestRate) * 100,
+                    interestRate: Math.floor(parseFloat(newLoan.interestRate) * 100), // Convert to basis points (5% = 500)
                     duration: parseInt(newLoan.duration),
                     fundedAmount: '0',
                     status: 0,
@@ -323,8 +324,10 @@ export default function FarmerDashboard() {
                 // Trigger event for real-time update
                 window.dispatchEvent(new Event('loanCreated'))
 
-                // Clear selected NFT after successful loan creation
-                setSelectedNFTForLoan(null)
+                // Auto switch to My Loans tab after 1.5 seconds
+                setTimeout(() => {
+                    setActiveTab('loans')
+                }, 1500)
             }
 
         } catch (error: any) {
@@ -334,24 +337,13 @@ export default function FarmerDashboard() {
             let errorMessage = 'Failed to create loan on blockchain'
 
             if (error.message?.includes('revert')) {
-                const revertMatch = error.message.match(/revert\s+(.+)/i)
-                if (revertMatch) {
-                    errorMessage = revertMatch[1]
-                } else {
-                    // Try to extract revert reason from data
-                    errorMessage = error.reason || errorMessage
-                }
-            } else if (error.message?.includes('RPC endpoint returned HTTP client error') ||
-                error.message?.includes('RPC Error') ||
-                error.message?.includes('Internal JSON-RPC error')) {
-                errorMessage = 'Hedera Testnet is experiencing issues. Please try again in a few moments.'
-            } else if (error.message?.includes('missing revert data')) {
-                errorMessage = 'Transaction would fail. Please check:\n- NFT is active and owned by you\n- Loan amount does not exceed 70% of collateral\n- Interest rate and duration are valid'
+                errorMessage = error.message.split('revert ')[1] || errorMessage
             } else if (error.message) {
                 errorMessage = error.message
             }
 
-            toast.error(errorMessage, { duration: 8000 })
+            toast.error(errorMessage)
+            toast.error('Please try again or check your wallet connection')
 
         } finally {
             setIsSubmitting(false)
@@ -447,6 +439,16 @@ export default function FarmerDashboard() {
                 {/* Tabs */}
                 <div className="flex gap-3 mb-8">
                     <button
+                        onClick={() => setActiveTab('nft')}
+                        className={`flex items-center gap-2 px-6 py-3 rounded-lg font-semibold transition-all ${activeTab === 'nft'
+                            ? 'bg-primary-600 text-white shadow-lg shadow-primary-200'
+                            : 'bg-white text-gray-700 hover:bg-gray-50 border border-gray-200'
+                            }`}
+                    >
+                        <Wheat className="w-5 h-5" />
+                        Create Harvest NFT
+                    </button>
+                    <button
                         onClick={() => setActiveTab('create')}
                         className={`flex items-center gap-2 px-6 py-3 rounded-lg font-semibold transition-all ${activeTab === 'create'
                             ? 'bg-primary-600 text-white shadow-lg shadow-primary-200'
@@ -454,91 +456,82 @@ export default function FarmerDashboard() {
                             }`}
                     >
                         <Plus className="w-5 h-5" />
-                        Create New Loan
+                        Request Loan
                     </button>
-
                     <button
-                        onClick={() => setActiveTab('nfts')}
-                        className={`flex items-center gap-2 px-6 py-3 rounded-lg font-semibold transition-all ${activeTab === 'nfts'
+                        onClick={() => setActiveTab('loans')}
+                        className={`flex items-center gap-2 px-6 py-3 rounded-lg font-semibold transition-all ${activeTab === 'loans'
                             ? 'bg-primary-600 text-white shadow-lg shadow-primary-200'
                             : 'bg-white text-gray-700 hover:bg-gray-50 border border-gray-200'
                             }`}
                     >
-                        <Wheat className="w-5 h-5" />
-                        Harvest NFTs 🆕
+                        <List className="w-5 h-5" />
+                        My Loans
                     </button>
                 </div>
 
                 {/* Content */}
-                {activeTab === 'create' ? (
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                        <div>
-                            <h3 className="text-xl font-bold mb-4">Create New Loan</h3>
-                            <CreateLoanForm
-                                onSuccess={addLoanToHistory}
-                                isSubmitting={isSubmitting}
-                                provider={provider}
-                                account={account}
-                                selectedNFT={selectedNFTForLoan}
-                                onClearNFT={() => setSelectedNFTForLoan(null)}
-                                onSwitchToNFTTab={() => setActiveTab('nfts')}
-                            />
-                        </div>
-                        <div>
-                            <h3 className="text-lg font-bold mb-3">My Loans</h3>
-                            <MyLoans 
-                                loans={farmerLoans} 
-                                provider={provider} 
-                                account={account}
-                                signer={signer}
-                                blockchainLoans={blockchainLoans} 
-                                setBlockchainLoans={setBlockchainLoans} 
-                                setTotalRequested={setTotalRequested} 
-                                setTotalFunded={setTotalFunded} 
-                                setActiveLoansCount={setActiveLoansCount} 
-                                setCompletedLoansCount={setCompletedLoansCount} 
-                            />
-                        </div>
-                    </div>
-                ) : (
+                {activeTab === 'nft' ? (
                     <div className="space-y-6">
+                        {/* Info Box */}
                         <div className="bg-blue-50 border border-blue-200 rounded-xl p-6">
-                            <h3 className="font-semibold text-blue-900 mb-2 flex items-center gap-2">
+                            <h3 className="text-lg font-bold text-blue-900 mb-3 flex items-center gap-2">
                                 <Wheat className="w-5 h-5" />
                                 🎉 Harvest NFTs - Use as Collateral
                             </h3>
-                            <p className="text-blue-800 text-sm">
-                                Your harvest tokens are now real NFTs on Hedera blockchain!
-                                They can be verified on HashScan, transferred between wallets,
-                                and used as collateral for loans. Each NFT costs only ~0.05 HBAR (~$0.005) to create.
-                                Click "Request Loan" on any active NFT to use it as collateral.
+                            <p className="text-blue-800 mb-4">
+                                Create real NFTs on Hedera blockchain to represent your future harvest.
+                                Use them as collateral for loans - they're reusable, verifiable on HashScan,
+                                and cost only ~0.05 HBAR (~$0.005) to create!
                             </p>
+                            <div className="bg-blue-100 rounded-lg p-4 mt-4">
+                                <p className="text-sm font-semibold text-blue-900 mb-2">📌 NFT Custody Model</p>
+                                <p className="text-sm text-blue-800">
+                                    NFTs are held by the platform treasury and linked to your wallet address.
+                                    This ensures seamless integration with loans without requiring token association in your wallet.
+                                </p>
+                            </div>
                         </div>
 
+                        {/* Grid 2 Columns */}
                         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                            {/* Left Column - Create Form */}
                             <div>
-                                <h3 className="text-xl font-bold mb-4">Create Harvest NFT</h3>
                                 <CreateHarvestNFTForm
                                     farmerAddress={account || ''}
-                                    farmerName={farmerName}
+                                    farmerName="Farmer"
                                     onSuccess={(nft) => {
-                                        toast.success('NFT created! You can now use it for loans.')
+                                        toast.success('NFT created! You can now use it as collateral for loans.')
                                     }}
                                 />
                             </div>
+
+                            {/* Right Column - My NFTs */}
                             <div>
-                                <h3 className="text-xl font-bold mb-4">My Harvest NFTs</h3>
                                 <MyHarvestNFTs
                                     farmerAddress={account || ''}
                                     onCreateLoan={(nft) => {
+                                        console.log('🔴 Farmer Page - onCreateLoan called with NFT:', nft)
                                         setSelectedNFTForLoan(nft)
                                         setActiveTab('create')
-                                        toast.success('NFT selected! Fill in loan details.')
+                                        toast.success(`NFT selected! Fill in loan details.`)
                                     }}
                                 />
                             </div>
                         </div>
                     </div>
+                ) : activeTab === 'create' ? (
+                    <CreateLoanForm
+                        key={selectedNFTForLoan?.id || 'default'}
+                        onSuccess={addLoanToHistory}
+                        isSubmitting={isSubmitting}
+                        provider={provider}
+                        account={account}
+                        selectedNFT={selectedNFTForLoan}
+                        onClearNFT={() => setSelectedNFTForLoan(null)}
+                    />
+                ) : (
+                    <MyLoans loans={farmerLoans} provider={provider} account={account} blockchainLoans={blockchainLoans} setBlockchainLoans={setBlockchainLoans} setTotalRequested={setTotalRequested} setTotalFunded={setTotalFunded} setActiveLoansCount={setActiveLoansCount} setCompletedLoansCount={setCompletedLoansCount} />
                 )}
             </div>
         </div>
@@ -569,50 +562,48 @@ function StatCard({ icon, label, value, color }: {
     )
 }
 
-function CreateLoanForm({ 
-    onSuccess, 
-    isSubmitting,
-    selectedNFT,
-    onClearNFT,
-    provider,
-    account,
-    onSwitchToNFTTab
-}: {
-    onSuccess: (loanData: Omit<CreatedLoan, 'id' | 'createdAt'>, nftData?: any) => Promise<void>
+function CreateLoanForm({ onSuccess, isSubmitting, provider, account, selectedNFT, onClearNFT }: {
+    onSuccess: (loanData: Omit<CreatedLoan, 'id' | 'createdAt'>, nftInternalId?: number) => Promise<void>
     isSubmitting: boolean
+    provider: any
+    account: string | null
     selectedNFT?: any
     onClearNFT?: () => void
-    provider?: any
-    account?: string | null
-    onSwitchToNFTTab?: () => void
 }) {
-    // If NFT is selected, skip Step 1 and auto-fill form
-    const [step, setStep] = useState(selectedNFT ? 2 : 1)
+    const [step, setStep] = useState(1)
     const [formData, setFormData] = useState({
-        cropType: selectedNFT?.metadata?.cropType || '',
-        expectedYield: selectedNFT?.metadata?.expectedYield?.toString() || '',
-        estimatedValue: selectedNFT?.metadata?.estimatedValue?.toString() || '',
-        harvestDate: selectedNFT?.metadata?.harvestDate || '',
+        cropType: '',
+        expectedYield: '',
+        estimatedValue: '',
+        harvestDate: '',
         loanAmount: '',
         interestRate: '5',
         duration: '90'
     })
-    const [formErrors, setFormErrors] = useState<Record<string, string>>({})
-    const [nftData, setNftData] = useState<any>(selectedNFT || null)
+    const [availableNFTs, setAvailableNFTs] = useState<any[]>([])
+    const [selectedNFTId, setSelectedNFTId] = useState<string>('')
+    const [useNFT, setUseNFT] = useState(false)
 
-    // Get user's verification level (default to level 1)
-    const [userVerificationLevel, setUserVerificationLevel] = useState(1)
-
+    // Load available NFTs when component mounts
     useEffect(() => {
-        if (typeof window !== 'undefined') {
-            const savedLevel = localStorage.getItem('userVerificationLevel')
-            setUserVerificationLevel(savedLevel ? parseInt(savedLevel) : 1)
+        if (account) {
+            loadAvailableNFTs()
         }
-    }, [])
+    }, [account])
 
-    // Auto-fill form when NFT is selected
+    // Auto-fill form when NFT is selected from NFT tab
     useEffect(() => {
-        if (selectedNFT?.metadata) {
+        console.log('🔍 CreateLoanForm mounted/updated, selectedNFT:', selectedNFT)
+        if (selectedNFT) {
+            console.log('✅ Auto-filling form with NFT data:', selectedNFT)
+            console.log('  - cropType:', selectedNFT.metadata?.cropType)
+            console.log('  - expectedYield:', selectedNFT.metadata?.expectedYield)
+            console.log('  - estimatedValue:', selectedNFT.metadata?.estimatedValue)
+            console.log('  - harvestDate:', selectedNFT.metadata?.harvestDate)
+            console.log('  - internalId:', selectedNFT.internalId)
+
+            setUseNFT(true)
+            setSelectedNFTId(selectedNFT.internalId?.toString() || '')
             setFormData({
                 cropType: selectedNFT.metadata.cropType || '',
                 expectedYield: selectedNFT.metadata.expectedYield?.toString() || '',
@@ -622,51 +613,82 @@ function CreateLoanForm({
                 interestRate: '5',
                 duration: '90'
             })
-            setNftData(selectedNFT)
-            setStep(2) // Skip to loan request step
+            setStep(2) // Skip to loan details
+            toast.success(`Using NFT: ${selectedNFT.metadata.cropType} Harvest`)
+        } else {
+            console.log('⚠️ selectedNFT is null/undefined')
         }
     }, [selectedNFT])
+
+    const loadAvailableNFTs = async () => {
+        try {
+            // Load from localStorage (temporary solution)
+            const storedNFTs = localStorage.getItem(`nfts_${account}`)
+            if (storedNFTs) {
+                const nfts = JSON.parse(storedNFTs)
+                // Filter only active NFTs
+                const activeNFTs = nfts.filter((nft: any) => nft.metadata?.isActive !== false)
+                setAvailableNFTs(activeNFTs)
+            }
+        } catch (error) {
+            console.error('Error loading NFTs:', error)
+        }
+    }
+
+    // Get user's verification level from blockchain
+    const [userVerificationLevel, setUserVerificationLevel] = useState(1)
+    const [isLoadingLevel, setIsLoadingLevel] = useState(false)
+
+    const loadVerificationLevel = async (showToast = false) => {
+        if (!provider || !account) {
+            // Default to level 1 if not connected
+            setUserVerificationLevel(1)
+            return
+        }
+
+        setIsLoadingLevel(true)
+        try {
+            const contract = getContract(provider)
+            const level = await contract.getVerificationLevel(account)
+            const levelNum = Number(level)
+
+            console.log('Verification level from blockchain:', levelNum)
+
+            // Check if level changed
+            const previousLevel = userVerificationLevel
+            const newLevel = levelNum || 1
+
+            setUserVerificationLevel(newLevel)
+
+            // Show toast if level changed and showToast is true
+            if (showToast && previousLevel !== newLevel && previousLevel !== 1) {
+                const levelInfo = getVerificationLevel(newLevel)
+                toast.success(`🎉 Verification level updated to ${levelInfo.badge} ${levelInfo.title}!`)
+            }
+        } catch (error) {
+            console.error('Error loading verification level:', error)
+            setUserVerificationLevel(1) // Default to 1 on error
+        } finally {
+            setIsLoadingLevel(false)
+        }
+    }
+
+    useEffect(() => {
+        loadVerificationLevel(false) // Initial load without toast
+
+        // Poll every 30 seconds to check for level updates
+        const interval = setInterval(() => {
+            loadVerificationLevel(true) // Show toast on auto-refresh if level changed
+        }, 30000) // 30 seconds
+
+        return () => clearInterval(interval)
+    }, [provider, account])
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault()
 
-        // Validate form
-        const errors: Record<string, string> = {}
-        
-        if (step === 1) {
-            if (!formData.cropType) errors.cropType = 'Crop type is required'
-            if (!formData.expectedYield || parseFloat(formData.expectedYield) <= 0) {
-                errors.expectedYield = 'Expected yield must be greater than 0'
-            }
-            if (!formData.estimatedValue || parseFloat(formData.estimatedValue) <= 0) {
-                errors.estimatedValue = 'Estimated value must be greater than 0'
-            }
-            if (!formData.harvestDate) {
-                errors.harvestDate = 'Harvest date is required'
-            } else if (new Date(formData.harvestDate) <= new Date()) {
-                errors.harvestDate = 'Harvest date must be in the future'
-            }
-        } else {
-            if (!formData.loanAmount || parseFloat(formData.loanAmount) <= 0) {
-                errors.loanAmount = 'Loan amount is required'
-            } else if (parseFloat(formData.loanAmount) > maxLoanAmount) {
-                errors.loanAmount = `Loan amount cannot exceed ${maxLoanAmount.toFixed(2)} HBAR`
-            }
-            if (!formData.interestRate || parseFloat(formData.interestRate) < verificationInfo.minInterest || parseFloat(formData.interestRate) > verificationInfo.maxInterest) {
-                errors.interestRate = `Interest rate must be between ${verificationInfo.minInterest}% and ${verificationInfo.maxInterest}%`
-            }
-            if (!formData.duration || parseFloat(formData.duration) <= 0) {
-                errors.duration = 'Duration must be greater than 0'
-            }
-        }
-
-        if (Object.keys(errors).length > 0) {
-            setFormErrors(errors)
-            toast.error('Please fix the errors in the form')
-            return
-        }
-
-        setFormErrors({})
+        // Determine if using NFT
+        const nftInternalId = useNFT && selectedNFTId ? parseInt(selectedNFTId) : undefined
 
         // Call onSuccess to save loan (toast will be shown from parent)
         await onSuccess({
@@ -678,23 +700,22 @@ function CreateLoanForm({
             interestRate: formData.interestRate,
             duration: formData.duration,
             status: 'Pending'
-        }, nftData)
+        }, nftInternalId)
 
         // Reset form
-        setStep(selectedNFT ? 2 : 1)
+        setStep(1)
+        setUseNFT(false)
+        setSelectedNFTId('')
         setFormData({
-            cropType: selectedNFT?.metadata?.cropType || '',
-            expectedYield: selectedNFT?.metadata?.expectedYield?.toString() || '',
-            estimatedValue: selectedNFT?.metadata?.estimatedValue?.toString() || '',
-            harvestDate: selectedNFT?.metadata?.harvestDate || '',
+            cropType: '',
+            expectedYield: '',
+            estimatedValue: '',
+            harvestDate: '',
             loanAmount: '',
             interestRate: '5',
             duration: '90'
         })
-        setFormErrors({})
-        if (onClearNFT) {
-            onClearNFT()
-        }
+        if (onClearNFT) onClearNFT()
     }
 
     // Get verification info
@@ -729,88 +750,41 @@ function CreateLoanForm({
                     </div>
                 </div>
 
-                <h2 className="text-2xl font-bold mb-6">
-                    {step === 1 ? '🌾 Step 1: Tokenize Your Harvest' : '💰 Step 2: Request Loan'}
-                </h2>
+                <div className="flex items-center justify-between mb-6">
+                    <h2 className="text-2xl font-bold">
+                        {step === 1 ? '🌾 Step 1: Tokenize Your Harvest' : '💰 Step 2: Request Loan'}
+                    </h2>
+                    {selectedNFT && (
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setSelectedNFTId('')
+                                setUseNFT(false)
+                                if (onClearNFT) onClearNFT()
+                                toast.success('NFT selection cleared')
+                            }}
+                            className="flex items-center gap-2 px-4 py-2 bg-red-100 text-red-700 rounded-lg hover:bg-red-200 transition-colors text-sm font-medium"
+                        >
+                            <X className="w-4 h-4" />
+                            Clear NFT
+                        </button>
+                    )}
+                </div>
 
-                {/* Show selected NFT info */}
-                {selectedNFT && step === 2 && (
-                    <div className="bg-gradient-to-r from-green-50 to-emerald-50 border-2 border-green-200 rounded-xl p-6 mb-6">
-                        <div className="flex items-start justify-between gap-4">
-                            <div className="flex items-start gap-4 flex-1">
-                                <div className="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center flex-shrink-0">
-                                    <Wheat className="w-6 h-6 text-green-600" />
-                                </div>
-                                <div className="flex-1">
-                                    <div className="flex items-center gap-2 mb-2">
-                                        <h3 className="font-bold text-green-900">Using Harvest NFT as Collateral</h3>
-                                        <span className="px-2 py-1 bg-green-200 text-green-800 text-xs font-semibold rounded-full">
-                                            NFT Selected
-                                        </span>
-                                    </div>
-                                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
-                                        <div>
-                                            <p className="text-green-700 font-medium">Crop</p>
-                                            <p className="text-green-900 font-bold">{selectedNFT.metadata.cropType}</p>
-                                        </div>
-                                        <div>
-                                            <p className="text-green-700 font-medium">Value</p>
-                                            <p className="text-green-900 font-bold">{selectedNFT.metadata.estimatedValue} HBAR</p>
-                                        </div>
-                                        <div>
-                                            <p className="text-green-700 font-medium">Yield</p>
-                                            <p className="text-green-900 font-bold">{selectedNFT.metadata.expectedYield} kg</p>
-                                        </div>
-                                        <div>
-                                            <p className="text-green-700 font-medium">Max Loan</p>
-                                            <p className="text-green-900 font-bold">{Math.floor(selectedNFT.metadata.estimatedValue * 0.7)} HBAR</p>
-                                        </div>
-                                    </div>
-                                    <a
-                                        href={`https://hashscan.io/testnet/token/${selectedNFT.tokenId}`}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        className="inline-flex items-center gap-1 text-xs text-green-700 hover:text-green-900 mt-2"
-                                    >
-                                        View on HashScan <ExternalLink className="w-3 h-3" />
-                                    </a>
-                                </div>
-                            </div>
-                            {onClearNFT && (
-                                <button
-                                    type="button"
-                                    onClick={onClearNFT}
-                                    className="text-gray-400 hover:text-gray-600 transition-colors flex-shrink-0"
-                                    title="Clear NFT selection"
-                                >
-                                    <X className="w-5 h-5" />
-                                </button>
-                            )}
-                        </div>
-                    </div>
-                )}
-
-                {/* Call-to-action if no NFT selected */}
-                {!selectedNFT && step === 1 && (
-                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-6 mb-6">
-                        <div className="flex items-start gap-4">
-                            <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center flex-shrink-0">
-                                <Wheat className="w-6 h-6 text-blue-600" />
+                {useNFT && selectedNFTId && (
+                    <div className="bg-green-50 border-2 border-green-300 rounded-xl p-4 mb-6">
+                        <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 bg-green-600 rounded-full flex items-center justify-center">
+                                <Wheat className="w-6 h-6 text-white" />
                             </div>
                             <div className="flex-1">
-                                <h3 className="font-bold text-blue-900 mb-2">💡 Tip: Use Harvest NFT for Better Experience</h3>
-                                <p className="text-sm text-blue-800 mb-4">
-                                    Create a Harvest NFT first to use as collateral. This makes the loan process faster and your harvest is verifiable on blockchain.
+                                <p className="font-semibold text-green-900">Using NFT as Collateral</p>
+                                <p className="text-sm text-green-700">
+                                    {formData.cropType} Harvest - {formData.estimatedValue} HBAR
                                 </p>
-                                {onSwitchToNFTTab && (
-                                    <button
-                                        type="button"
-                                        onClick={onSwitchToNFTTab}
-                                        className="text-sm text-blue-600 hover:text-blue-800 font-medium underline"
-                                    >
-                                        Go to Harvest NFTs tab →
-                                    </button>
-                                )}
+                            </div>
+                            <div className="px-3 py-1 bg-green-600 text-white rounded-full text-sm font-semibold">
+                                NFT #{selectedNFTId}
                             </div>
                         </div>
                     </div>
@@ -819,110 +793,112 @@ function CreateLoanForm({
                 <form onSubmit={handleSubmit} className="space-y-6">
                     {step === 1 ? (
                         <>
-                            <div>
-                                <label className="label">Crop Type *</label>
-                                <select
-                                    className={`input ${formErrors.cropType ? 'border-red-500 focus:ring-red-500' : ''}`}
-                                    value={formData.cropType}
-                                    onChange={(e) => {
-                                        setFormData({ ...formData, cropType: e.target.value })
-                                        if (formErrors.cropType) {
-                                            setFormErrors({ ...formErrors, cropType: '' })
-                                        }
-                                    }}
-                                    required
-                                >
-                                    <option value="">Select your crop type</option>
-                                    
-                                    {/* Cereals & Grains */}
-                                    <optgroup label="🌾 Cereals & Grains">
-                                        <option value="Rice">Rice</option>
-                                        <option value="Wheat">Wheat</option>
-                                        <option value="Corn">Corn</option>
-                                        <option value="Barley">Barley</option>
-                                        <option value="Oats">Oats</option>
-                                        <option value="Sorghum">Sorghum</option>
-                                        <option value="Millet">Millet</option>
-                                    </optgroup>
-                                    
-                                    {/* Legumes */}
-                                    <optgroup label="🫘 Legumes">
-                                        <option value="Soybean">Soybean</option>
-                                        <option value="Peanut">Peanut</option>
-                                        <option value="Green Bean">Green Bean</option>
-                                        <option value="Red Bean">Red Bean</option>
-                                        <option value="Chickpea">Chickpea</option>
-                                        <option value="Lentil">Lentil</option>
-                                    </optgroup>
-                                    
-                                    {/* Vegetables */}
-                                    <optgroup label="🥬 Vegetables">
-                                        <option value="Tomato">Tomato</option>
-                                        <option value="Potato">Potato</option>
-                                        <option value="Onion">Onion</option>
-                                        <option value="Garlic">Garlic</option>
-                                        <option value="Cabbage">Cabbage</option>
-                                        <option value="Carrot">Carrot</option>
-                                        <option value="Chili">Chili</option>
-                                        <option value="Eggplant">Eggplant</option>
-                                        <option value="Cucumber">Cucumber</option>
-                                        <option value="Lettuce">Lettuce</option>
-                                    </optgroup>
-                                    
-                                    {/* Fruits */}
-                                    <optgroup label="🍎 Fruits">
-                                        <option value="Banana">Banana</option>
-                                        <option value="Mango">Mango</option>
-                                        <option value="Papaya">Papaya</option>
-                                        <option value="Pineapple">Pineapple</option>
-                                        <option value="Watermelon">Watermelon</option>
-                                        <option value="Melon">Melon</option>
-                                        <option value="Orange">Orange</option>
-                                        <option value="Apple">Apple</option>
-                                        <option value="Strawberry">Strawberry</option>
-                                        <option value="Durian">Durian</option>
-                                    </optgroup>
-                                    
-                                    {/* Cash Crops */}
-                                    <optgroup label="☕ Cash Crops">
-                                        <option value="Coffee">Coffee</option>
-                                        <option value="Cocoa">Cocoa</option>
-                                        <option value="Tea">Tea</option>
-                                        <option value="Rubber">Rubber</option>
-                                        <option value="Palm Oil">Palm Oil</option>
-                                        <option value="Sugarcane">Sugarcane</option>
-                                        <option value="Cotton">Cotton</option>
-                                        <option value="Tobacco">Tobacco</option>
-                                    </optgroup>
-                                    
-                                    {/* Spices & Herbs */}
-                                    <optgroup label="🌿 Spices & Herbs">
-                                        <option value="Black Pepper">Black Pepper</option>
-                                        <option value="Ginger">Ginger</option>
-                                        <option value="Turmeric">Turmeric</option>
-                                        <option value="Galangal">Galangal</option>
-                                        <option value="Lemongrass">Lemongrass</option>
-                                        <option value="Vanilla">Vanilla</option>
-                                        <option value="Cinnamon">Cinnamon</option>
-                                        <option value="Clove">Clove</option>
-                                        <option value="Nutmeg">Nutmeg</option>
-                                    </optgroup>
-                                    
-                                    {/* Root Crops */}
-                                    <optgroup label="🥔 Root Crops">
-                                        <option value="Cassava">Cassava</option>
-                                        <option value="Sweet Potato">Sweet Potato</option>
-                                        <option value="Taro">Taro</option>
-                                        <option value="Yam">Yam</option>
-                                    </optgroup>
-                                    
-                                    {/* Other */}
-                                    <optgroup label="🌱 Other">
-                                        <option value="Mushroom">Mushroom</option>
-                                        <option value="Bamboo">Bamboo</option>
-                                        <option value="Other">Other</option>
-                                    </optgroup>
-                                </select>
+                            {/* NFT Selection Option */}
+                            <div className="bg-gradient-to-r from-green-50 to-emerald-50 border-2 border-green-200 rounded-xl p-6">
+                                <div className="flex items-start gap-4">
+                                    <input
+                                        type="checkbox"
+                                        id="useNFT"
+                                        checked={useNFT}
+                                        onChange={(e) => {
+                                            setUseNFT(e.target.checked)
+                                            if (!e.target.checked) {
+                                                setSelectedNFTId('')
+                                                if (onClearNFT) onClearNFT()
+                                            }
+                                        }}
+                                        className="mt-1 w-5 h-5 text-green-600 rounded focus:ring-green-500"
+                                    />
+                                    <div className="flex-1">
+                                        <label htmlFor="useNFT" className="font-semibold text-green-900 cursor-pointer flex items-center gap-2">
+                                            <Wheat className="w-5 h-5" />
+                                            Use Existing Harvest NFT as Collateral
+                                        </label>
+                                        <p className="text-sm text-green-700 mt-1">
+                                            Select an NFT you've already created to use as collateral for this loan
+                                        </p>
+                                    </div>
+                                </div>
+
+                                {useNFT && (
+                                    <div className="mt-4">
+                                        <label className="label">Select Your NFT *</label>
+                                        <select
+                                            className="input"
+                                            value={selectedNFTId}
+                                            onChange={(e) => {
+                                                const nftId = e.target.value
+                                                setSelectedNFTId(nftId)
+
+                                                // Auto-fill form with NFT data
+                                                const nft = availableNFTs.find(n => n.internalId?.toString() === nftId)
+                                                if (nft) {
+                                                    setFormData({
+                                                        ...formData,
+                                                        cropType: nft.metadata.cropType || '',
+                                                        expectedYield: nft.metadata.expectedYield?.toString() || '',
+                                                        estimatedValue: nft.metadata.estimatedValue?.toString() || '',
+                                                        harvestDate: nft.metadata.harvestDate || ''
+                                                    })
+                                                }
+                                            }}
+                                            required={useNFT}
+                                        >
+                                            <option value="">Choose an NFT...</option>
+                                            {availableNFTs.map((nft, index) => (
+                                                <option key={index} value={nft.internalId || index}>
+                                                    {nft.metadata.cropType} - {nft.metadata.estimatedValue} HBAR - Serial #{nft.serialNumber}
+                                                </option>
+                                            ))}
+                                        </select>
+                                        {availableNFTs.length === 0 && (
+                                            <p className="text-sm text-gray-600 mt-2">
+                                                ℹ️ No existing NFTs. Uncheck this option to create a new harvest token.
+                                            </p>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Harvest Details - Auto-filled if NFT selected */}
+                            <div className={useNFT && selectedNFTId ? 'opacity-75' : ''}>
+                                {useNFT && selectedNFTId && (
+                                    <div className="bg-green-50 border-2 border-green-300 rounded-lg p-4 mb-4">
+                                        <div className="flex items-start gap-3">
+                                            <div className="w-8 h-8 bg-green-600 rounded-full flex items-center justify-center flex-shrink-0">
+                                                <Lock className="w-4 h-4 text-white" />
+                                            </div>
+                                            <div>
+                                                <p className="font-semibold text-green-900 mb-1">
+                                                    🔒 Harvest Details Locked
+                                                </p>
+                                                <p className="text-sm text-green-800">
+                                                    These fields are auto-filled from your NFT and cannot be changed.
+                                                    This ensures data consistency between your NFT and loan request.
+                                                </p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+
+                                <div>
+                                    <label className="label">Crop Type *</label>
+                                    <select
+                                        className={`input ${useNFT && selectedNFTId ? 'bg-gray-100 cursor-not-allowed' : ''}`}
+                                        value={formData.cropType}
+                                        onChange={(e) => setFormData({ ...formData, cropType: e.target.value })}
+                                        required
+                                        disabled={useNFT && selectedNFTId !== ''}
+                                    >
+                                        <option value="">Select your crop type</option>
+                                        <option value="Corn">🌽 Corn</option>
+                                        <option value="Rice">🌾 Rice</option>
+                                        <option value="Wheat">🌾 Wheat</option>
+                                        <option value="Soybean">🫘 Soybean</option>
+                                        <option value="Coffee">☕ Coffee</option>
+                                        <option value="Cotton">🌱 Cotton</option>
+                                    </select>
+                                </div>
                             </div>
 
                             <div className="grid md:grid-cols-2 gap-6">
@@ -930,54 +906,38 @@ function CreateLoanForm({
                                     <label className="label">Expected Yield (kg) *</label>
                                     <input
                                         type="number"
-                                        className={`input ${formErrors.expectedYield ? 'border-red-500 focus:ring-red-500' : ''}`}
+                                        className={`input ${useNFT && selectedNFTId ? 'bg-gray-100 cursor-not-allowed' : ''}`}
                                         placeholder="e.g., 2000"
                                         value={formData.expectedYield}
-                                        onChange={(e) => {
-                                            setFormData({ ...formData, expectedYield: e.target.value })
-                                            if (formErrors.expectedYield) {
-                                                setFormErrors({ ...formErrors, expectedYield: '' })
-                                            }
-                                        }}
+                                        onChange={(e) => setFormData({ ...formData, expectedYield: e.target.value })}
                                         required
+                                        disabled={useNFT && selectedNFTId !== ''}
+                                        readOnly={useNFT && selectedNFTId !== ''}
                                     />
-                                    {formErrors.expectedYield && (
-                                        <p className="text-xs text-red-600 mt-1">{formErrors.expectedYield}</p>
-                                    )}
-                                    {!formErrors.expectedYield && (
-                                        <p className="text-xs text-gray-500 mt-1">Estimated harvest quantity</p>
-                                    )}
+                                    <p className="text-xs text-gray-500 mt-1">Estimated harvest quantity</p>
                                 </div>
 
                                 <div>
                                     <label className="label">Estimated Value (HBAR) *</label>
                                     <input
                                         type="number"
-                                        className={`input ${formErrors.estimatedValue ? 'border-red-500 focus:ring-red-500' : ''}`}
+                                        className={`input ${useNFT && selectedNFTId ? 'bg-gray-100 cursor-not-allowed' : ''}`}
                                         placeholder="e.g., 2000"
                                         value={formData.estimatedValue}
-                                        onChange={(e) => {
-                                            setFormData({ ...formData, estimatedValue: e.target.value })
-                                            if (formErrors.estimatedValue) {
-                                                setFormErrors({ ...formErrors, estimatedValue: '' })
-                                            }
-                                        }}
+                                        onChange={(e) => setFormData({ ...formData, estimatedValue: e.target.value })}
                                         min="1"
                                         max="10000000"
                                         step="0.01"
                                         required
+                                        disabled={useNFT && selectedNFTId !== ''}
+                                        readOnly={useNFT && selectedNFTId !== ''}
                                     />
-                                    {formErrors.estimatedValue && (
-                                        <p className="text-xs text-red-600 mt-1">{formErrors.estimatedValue}</p>
-                                    )}
-                                    {!formErrors.estimatedValue && (
-                                        <div className="mt-1 space-y-1">
-                                            <p className="text-xs text-gray-500">Total market value in HBAR</p>
-                                            <p className="text-xs text-blue-600 font-medium">
-                                                💡 Enter in HBAR (e.g., 2000 for two thousand HBAR)
-                                            </p>
-                                        </div>
-                                    )}
+                                    <div className="mt-1 space-y-1">
+                                        <p className="text-xs text-gray-500">Total market value in HBAR</p>
+                                        <p className="text-xs text-blue-600 font-medium">
+                                            💡 Enter in HBAR (e.g., 2000 for two thousand HBAR)
+                                        </p>
+                                    </div>
                                 </div>
                             </div>
 
@@ -985,23 +945,15 @@ function CreateLoanForm({
                                 <label className="label">Expected Harvest Date *</label>
                                 <input
                                     type="date"
-                                    className={`input ${formErrors.harvestDate ? 'border-red-500 focus:ring-red-500' : ''}`}
+                                    disabled={useNFT && selectedNFTId !== ''}
+                                    readOnly={useNFT && selectedNFTId !== ''}
+                                    className={`input ${useNFT && selectedNFTId ? 'bg-gray-100 cursor-not-allowed' : ''}`}
                                     value={formData.harvestDate}
-                                    onChange={(e) => {
-                                        setFormData({ ...formData, harvestDate: e.target.value })
-                                        if (formErrors.harvestDate) {
-                                            setFormErrors({ ...formErrors, harvestDate: '' })
-                                        }
-                                    }}
+                                    onChange={(e) => setFormData({ ...formData, harvestDate: e.target.value })}
                                     min={new Date().toISOString().split('T')[0]}
                                     required
                                 />
-                                {formErrors.harvestDate && (
-                                    <p className="text-xs text-red-600 mt-1">{formErrors.harvestDate}</p>
-                                )}
-                                {!formErrors.harvestDate && (
-                                    <p className="text-xs text-gray-500 mt-1">When do you expect to harvest?</p>
-                                )}
+                                <p className="text-xs text-gray-500 mt-1">When do you expect to harvest?</p>
                             </div>
 
                             {/* Verification Level Info */}
@@ -1010,13 +962,25 @@ function CreateLoanForm({
                                     <div className="flex gap-3 flex-1">
                                         <Shield className="w-5 h-5 text-primary-600 flex-shrink-0 mt-0.5" />
                                         <div>
-                                            <p className="font-medium text-primary-900 mb-1">
-                                                Your Verification Level: {verificationInfo.badge} {verificationInfo.title}
-                                            </p>
+                                            <div className="flex items-center gap-2 mb-1">
+                                                <p className="font-medium text-primary-900">
+                                                    Your Verification Level: {verificationInfo.badge} {verificationInfo.title}
+                                                </p>
+                                                {isLoadingLevel && (
+                                                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary-600"></div>
+                                                )}
+                                            </div>
                                             <p className="text-sm text-primary-800">
                                                 Max loan amount: <span className="font-bold">{verificationInfo.maxLoanDisplay}</span> |
                                                 Interest range: <span className="font-bold">{verificationInfo.interestRange}</span>
                                             </p>
+                                            <button
+                                                onClick={() => loadVerificationLevel(true)}
+                                                disabled={isLoadingLevel}
+                                                className="text-xs text-primary-600 hover:text-primary-700 underline mt-1 disabled:opacity-50"
+                                            >
+                                                🔄 Refresh Level
+                                            </button>
                                         </div>
                                     </div>
                                     <Link href="/farmer/verification" className="btn-secondary text-sm py-1 px-3 whitespace-nowrap">
@@ -1074,23 +1038,15 @@ function CreateLoanForm({
                                 <label className="label">Loan Amount (HBAR) *</label>
                                 <input
                                     type="number"
-                                    className={`input ${formErrors.loanAmount ? 'border-red-500 focus:ring-red-500' : ''}`}
+                                    className="input"
                                     placeholder="Enter loan amount in HBAR (e.g., 140)"
                                     value={formData.loanAmount}
-                                    onChange={(e) => {
-                                        setFormData({ ...formData, loanAmount: e.target.value })
-                                        if (formErrors.loanAmount) {
-                                            setFormErrors({ ...formErrors, loanAmount: '' })
-                                        }
-                                    }}
+                                    onChange={(e) => setFormData({ ...formData, loanAmount: e.target.value })}
                                     min="1"
                                     max={maxLoanAmount}
                                     step="0.01"
                                     required
                                 />
-                                {formErrors.loanAmount && (
-                                    <p className="text-xs text-red-600 mt-1">{formErrors.loanAmount}</p>
-                                )}
                                 <div className="mt-2 space-y-1">
                                     <p className="text-xs text-blue-600 font-medium">
                                         💡 Enter in HBAR (e.g., 140 for one hundred forty HBAR)
@@ -1121,49 +1077,29 @@ function CreateLoanForm({
                                     <label className="label">Interest Rate (%) *</label>
                                     <input
                                         type="number"
-                                        className={`input ${formErrors.interestRate ? 'border-red-500 focus:ring-red-500' : ''}`}
+                                        className="input"
                                         step="0.1"
                                         min={verificationInfo.minInterest}
                                         max={verificationInfo.maxInterest}
                                         value={formData.interestRate}
-                                        onChange={(e) => {
-                                            setFormData({ ...formData, interestRate: e.target.value })
-                                            if (formErrors.interestRate) {
-                                                setFormErrors({ ...formErrors, interestRate: '' })
-                                            }
-                                        }}
+                                        onChange={(e) => setFormData({ ...formData, interestRate: e.target.value })}
                                         required
                                     />
-                                    {formErrors.interestRate && (
-                                        <p className="text-xs text-red-600 mt-1">{formErrors.interestRate}</p>
-                                    )}
-                                    {!formErrors.interestRate && (
-                                        <p className="text-xs text-gray-500 mt-1">
-                                            Your range: {verificationInfo.interestRange} ({verificationInfo.title} level)
-                                        </p>
-                                    )}
+                                    <p className="text-xs text-gray-500 mt-1">
+                                        Your range: {verificationInfo.interestRange} ({verificationInfo.title} level)
+                                    </p>
                                 </div>
 
                                 <div>
                                     <label className="label">Duration (days) *</label>
                                     <input
                                         type="number"
-                                        className={`input ${formErrors.duration ? 'border-red-500 focus:ring-red-500' : ''}`}
+                                        className="input"
                                         value={formData.duration}
-                                        onChange={(e) => {
-                                            setFormData({ ...formData, duration: e.target.value })
-                                            if (formErrors.duration) {
-                                                setFormErrors({ ...formErrors, duration: '' })
-                                            }
-                                        }}
+                                        onChange={(e) => setFormData({ ...formData, duration: e.target.value })}
                                         required
                                     />
-                                    {formErrors.duration && (
-                                        <p className="text-xs text-red-600 mt-1">{formErrors.duration}</p>
-                                    )}
-                                    {!formErrors.duration && (
-                                        <p className="text-xs text-gray-500 mt-1">Loan period</p>
-                                    )}
+                                    <p className="text-xs text-gray-500 mt-1">Loan period</p>
                                 </div>
                             </div>
 
@@ -1202,20 +1138,10 @@ function CreateLoanForm({
                                 </button>
                                 <button
                                     type="submit"
-                                    className="btn-primary flex-1 py-3 text-lg disabled:opacity-50 disabled:cursor-not-allowed"
+                                    className="btn-primary flex-1 py-3 text-lg"
                                     disabled={isSubmitting}
                                 >
-                                    {isSubmitting ? (
-                                        <span className="flex items-center justify-center gap-2">
-                                            <svg className="animate-spin h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                                            </svg>
-                                            Processing on Blockchain...
-                                        </span>
-                                    ) : (
-                                        'Submit Loan Request'
-                                    )}
+                                    {isSubmitting ? 'Processing on Blockchain...' : 'Submit Loan Request'}
                                 </button>
                             </div>
                         </>
@@ -1230,7 +1156,6 @@ function MyLoans({
     loans,
     provider,
     account,
-    signer,
     blockchainLoans,
     setBlockchainLoans,
     setTotalRequested,
@@ -1241,7 +1166,6 @@ function MyLoans({
     loans: CreatedLoan[]
     provider: any
     account: string | null
-    signer: any
     blockchainLoans: any[]
     setBlockchainLoans: (loans: any[]) => void
     setTotalRequested: (value: string) => void
@@ -1249,7 +1173,6 @@ function MyLoans({
     setActiveLoansCount: (value: number) => void
     setCompletedLoansCount: (value: number) => void
 }) {
-    const [repayingLoans, setRepayingLoans] = useState<Set<number>>(new Set())
     // Load loans from blockchain
     useEffect(() => {
         const loadBlockchainLoans = async () => {
@@ -1260,11 +1183,14 @@ function MyLoans({
                 const contractAddress = process.env.NEXT_PUBLIC_CONTRACT_ADDRESS
 
                 if (!contractAddress || contractAddress === '0x0000000000000000000000000000000000000000') {
+                    console.log('⚠️ Contract address not configured, skipping blockchain loans')
                     return
                 }
 
                 // Get farmer's loan IDs
+                console.log('📡 Loading blockchain loans for:', account)
                 const loanIds = await contract.getFarmerLoans(account)
+                console.log('📡 Found loan IDs:', loanIds)
 
                 const farmerLoans = await Promise.all(loanIds.map(async (loanId: bigint) => {
                     try {
@@ -1306,141 +1232,48 @@ function MyLoans({
                 setActiveLoansCount(active)
                 setCompletedLoansCount(completed)
             } catch (error) {
-                console.error('Error loading blockchain loans:', error)
+                console.error('❌ Error loading blockchain loans:', error)
+                // Don't throw, just log and continue
+                // This ensures the error doesn't block other functionality
             }
         }
 
-        loadBlockchainLoans()
+        // Use setTimeout to ensure this doesn't block other operations
+        setTimeout(() => {
+            loadBlockchainLoans().catch(err => {
+                console.error('❌ Async error in loadBlockchainLoans:', err)
+            })
+        }, 100)
     }, [provider, account])
 
-    // Update stats based on blockchain loans
+    // Also update stats when loans from localStorage change
     useEffect(() => {
-        const totalReq = blockchainLoans.reduce((sum, loan) => sum + parseFloat(loan.requestedAmount || '0'), 0)
-        const totalFund = blockchainLoans.reduce((sum, loan) => sum + parseFloat(loan.fundedAmount || '0'), 0)
-        const active = blockchainLoans.filter(loan => loan.status === 0 || loan.status === 1).length
-        const completed = blockchainLoans.filter(loan => loan.status === 2).length
+        const onChainLoans = loans.filter(loan => loan.isOnChain && loan.txHash)
+        const allLoans = [...onChainLoans, ...blockchainLoans]
+
+        const totalReq = allLoans.reduce((sum, loan) => sum + parseFloat(loan.requestedAmount || '0'), 0)
+        const totalFund = allLoans.reduce((sum, loan) => sum + parseFloat(loan.fundedAmount || '0'), 0)
+        const active = allLoans.filter(loan => loan.status === 0 || loan.status === 1).length
+        const completed = allLoans.filter(loan => loan.status === 2).length
 
         setTotalRequested(totalReq.toFixed(2))
         setTotalFunded(totalFund.toFixed(2))
         setActiveLoansCount(active)
         setCompletedLoansCount(completed)
-    }, [blockchainLoans])
+    }, [loans, blockchainLoans])
 
-    // Function to repay loan
-    const handleRepayLoan = async (loanId: number, loan: any) => {
-        if (!signer || !account) {
-            toast.error('Please connect your wallet')
-            return
+    // Filter loans to show only on-chain loans
+    const onChainLoans = loans.filter(loan => loan.isOnChain && loan.txHash)
+
+    // Combine on-chain loans from localStorage and blockchain, removing duplicates
+    const combinedLoans = [...onChainLoans, ...blockchainLoans]
+    const allLoans = combinedLoans.reduce((acc: any[], current: any) => {
+        const exists = acc.find(loan => loan.id === current.id)
+        if (!exists) {
+            acc.push(current)
         }
-
-        try {
-            setRepayingLoans(prev => new Set(prev).add(loanId))
-            const contract = getContract(signer)
-
-            // Get loan details to calculate repayment
-            const loanDetails = await contract.getLoanDetails(loanId)
-
-            // Calculate total repayment (principal + interest)
-            const interest = (loanDetails.requestedAmount * BigInt(loanDetails.interestRate)) / BigInt(10000)
-            const totalRepayment = loanDetails.requestedAmount + interest
-            const totalRepaymentHBAR = parseFloat(weiToHBAR(totalRepayment.toString()))
-
-            // Confirm repayment
-            const confirmed = window.confirm(
-                `Repay Loan #${loanId}?\n\n` +
-                `Principal: ${formatHBARNumber(loan.requestedAmount)} HBAR\n` +
-                `Interest: ${formatHBARNumber(parseFloat(weiToHBAR(interest.toString())))} HBAR\n` +
-                `Total: ${formatHBARNumber(totalRepaymentHBAR.toString())} HBAR`
-            )
-
-            if (!confirmed) {
-                setRepayingLoans(prev => {
-                    const newSet = new Set(prev)
-                    newSet.delete(loanId)
-                    return newSet
-                })
-                return
-            }
-
-            const loadingToast = toast.loading('Processing repayment on blockchain...')
-
-            // Convert to tinybar for Hedera EVM (msg.value is in tinybar)
-            const totalRepaymentTinybar = totalRepayment / BigInt(10 ** 10) // Convert wei to tinybar
-
-            // Call repayLoan function
-            const tx = await contract.repayLoan(loanId, {
-                value: totalRepaymentTinybar
-            })
-
-            toast.dismiss(loadingToast)
-            const waitingToast = toast.loading('Waiting for confirmation...')
-
-            const receipt = await tx.wait()
-
-            toast.dismiss(waitingToast)
-            toast.success(`Successfully repaid loan! Total: ${formatHBARNumber(totalRepaymentHBAR.toString())} HBAR`)
-
-            // Reload loans
-            const loadBlockchainLoans = async () => {
-                if (!provider || !account) return
-
-                try {
-                    const contract = getContract(provider)
-                    const contractAddress = process.env.NEXT_PUBLIC_CONTRACT_ADDRESS
-
-                    if (!contractAddress || contractAddress === '0x0000000000000000000000000000000000000000') {
-                        return
-                    }
-
-                    const loanIds = await contract.getFarmerLoans(account)
-
-                    const farmerLoans = await Promise.all(loanIds.map(async (loanId: bigint) => {
-                        try {
-                            const loanDetails = await contract.getLoanDetails(loanId)
-                            const harvestToken = await contract.harvestTokens(loanDetails.harvestTokenId)
-                            const investments = await contract.getLoanInvestments(loanId)
-                            const totalFunded = investments.reduce((sum: bigint, inv: any) => sum + inv.amount, BigInt(0))
-
-                            return {
-                                id: Number(loanId),
-                                cropType: harvestToken.cropType,
-                                requestedAmount: ethers.formatEther(loanDetails.requestedAmount),
-                                fundedAmount: ethers.formatEther(totalFunded),
-                                interestRate: Number(loanDetails.interestRate),
-                                duration: Number(loanDetails.duration),
-                                status: Number(loanDetails.status),
-                                txHash: 'blockchain',
-                                isOnChain: true
-                            }
-                        } catch (error) {
-                            console.error('Error loading loan:', error)
-                            return null
-                        }
-                    }))
-
-                    const validLoans = farmerLoans.filter(loan => loan !== null)
-                    setBlockchainLoans(validLoans)
-                } catch (error) {
-                    console.error('Error reloading loans:', error)
-                }
-            }
-
-            await loadBlockchainLoans()
-        } catch (error: any) {
-            console.error('Error repaying loan:', error)
-            const errorMsg = error.reason || error.message || 'Failed to repay loan'
-            toast.error(`Repayment failed: ${errorMsg}`)
-        } finally {
-            setRepayingLoans(prev => {
-                const newSet = new Set(prev)
-                newSet.delete(loanId)
-                return newSet
-            })
-        }
-    }
-
-    // Use only blockchain loans (fresh data from contract)
-    const allLoans = blockchainLoans
+        return acc
+    }, [])
 
     return (
         <div>
@@ -1458,20 +1291,24 @@ function MyLoans({
             ) : (
                 <div className="grid md:grid-cols-2 gap-6">
                     {allLoans.map((loan) => {
-                        const progress = (parseFloat(loan.fundedAmount) / parseFloat(loan.requestedAmount)) * 100
+                        // Safe calculation for funding progress
+                        const fundedAmount = parseFloat(loan.fundedAmount || '0')
+                        const requestedAmount = parseFloat(loan.requestedAmount || loan.loanAmount || '0')
+                        const progress = requestedAmount > 0 ? (fundedAmount / requestedAmount) * 100 : 0
+
                         return (
                             <div key={loan.id} className="card hover:shadow-lg transition-shadow">
-                                <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-4">
-                                    <div className="flex items-center gap-3">
-                                        <div className="w-12 h-12 bg-primary-100 rounded-lg flex items-center justify-center">
-                                            <Sprout className="w-6 h-6 text-primary-600" />
+                                <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
+                                    <div className="flex items-center gap-4">
+                                        <div className="w-16 h-16 bg-primary-100 rounded-lg flex items-center justify-center">
+                                            <Sprout className="w-8 h-8 text-primary-600" />
                                         </div>
                                         <div>
-                                            <h3 className="text-lg font-bold mb-0.5">{loan.cropType} Harvest</h3>
-                                            <p className="text-xs text-gray-600">Loan #{loan.id}</p>
+                                            <h3 className="text-2xl font-bold mb-1">{loan.cropType} Harvest</h3>
+                                            <p className="text-sm text-gray-600">Loan #{loan.id}</p>
                                         </div>
                                     </div>
-                                    <span className={`px-3 py-1 rounded-full text-xs font-semibold ${loan.status === 0 ? 'bg-yellow-100 text-yellow-800' :
+                                    <span className={`px-4 py-2 rounded-full text-sm font-semibold ${loan.status === 0 ? 'bg-yellow-100 text-yellow-800' :
                                         loan.status === 1 ? 'bg-blue-100 text-blue-800' :
                                             loan.status === 2 ? 'bg-green-100 text-green-800' :
                                                 'bg-gray-100 text-gray-800'
@@ -1480,95 +1317,54 @@ function MyLoans({
                                     </span>
                                 </div>
 
-                                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+                                <div className="grid grid-cols-2 md:grid-cols-4 gap-6 mb-6">
                                     <div>
-                                        <p className="text-xs text-gray-600 mb-1">Requested</p>
-                                        <p className="text-base font-bold">{formatHBARNumber(loan.requestedAmount)} HBAR</p>
+                                        <p className="text-sm text-gray-600 mb-1">Requested</p>
+                                        <p className="text-xl font-bold">{requestedAmount.toFixed(2)} HBAR</p>
                                     </div>
                                     <div>
-                                        <p className="text-xs text-gray-600 mb-1">Funded</p>
-                                        <p className="text-base font-bold text-green-600">{formatHBARNumber(loan.fundedAmount)} HBAR</p>
+                                        <p className="text-sm text-gray-600 mb-1">Funded</p>
+                                        <p className="text-xl font-bold text-green-600">{fundedAmount.toFixed(2)} HBAR</p>
                                     </div>
                                     <div>
-                                        <p className="text-xs text-gray-600 mb-1">Interest</p>
-                                        <p className="text-base font-bold">{(loan.interestRate / 100).toFixed(1)}%</p>
+                                        <p className="text-sm text-gray-600 mb-1">Interest</p>
+                                        <p className="text-xl font-bold">
+                                            {(() => {
+                                                // Handle different interest rate formats
+                                                // If > 100, it's in basis points (500 = 5%)
+                                                // If < 100, it's already in percentage (5 = 5%)
+                                                const interestRate = Number(loan.interestRate) || 0
+                                                const rate = interestRate > 100
+                                                    ? interestRate / 100
+                                                    : interestRate
+                                                return rate.toFixed(1)
+                                            })()}%
+                                        </p>
                                     </div>
                                     <div>
-                                        <p className="text-xs text-gray-600 mb-1">Duration</p>
-                                        <p className="text-base font-bold">{loan.duration} days</p>
+                                        <p className="text-sm text-gray-600 mb-1">Duration</p>
+                                        <p className="text-xl font-bold">{loan.duration} days</p>
                                     </div>
                                 </div>
 
                                 <div>
-                                    <div className="flex justify-between text-xs mb-1.5">
+                                    <div className="flex justify-between text-sm mb-2">
                                         <span className="text-gray-600 font-medium">Funding Progress</span>
                                         <span className="font-bold text-primary-600">{progress.toFixed(0)}%</span>
                                     </div>
-                                    <div className="w-full bg-gray-200 rounded-full h-2">
+                                    <div className="w-full bg-gray-200 rounded-full h-3">
                                         <div
-                                            className="bg-gradient-to-r from-primary-500 to-primary-600 h-2 rounded-full transition-all duration-500"
+                                            className="bg-gradient-to-r from-primary-500 to-primary-600 h-3 rounded-full transition-all duration-500"
                                             style={{ width: `${progress}%` }}
                                         ></div>
                                     </div>
-                                    <p className="text-xs text-gray-500 mt-1.5">
-                                        {formatHBARNumber(loan.fundedAmount)} / {formatHBARNumber(loan.requestedAmount)} HBAR funded
+                                    <p className="text-xs text-gray-500 mt-2">
+                                        {fundedAmount.toFixed(2)} / {requestedAmount.toFixed(2)} HBAR funded
                                     </p>
                                 </div>
-                                {/* Repayment Section */}
-                                {loan.status === 1 && ( // Status = Funded
-                                    <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                                        <div className="mb-2">
-                                            <p className="text-xs font-semibold text-blue-900 mb-1">Ready to Repay</p>
-                                            <p className="text-xs text-blue-700">
-                                                Principal: {formatHBARNumber(loan.requestedAmount)} HBAR
-                                                {' + '}
-                                                Interest: {formatHBARNumber((parseFloat(loan.requestedAmount) * loan.interestRate / 10000).toString())} HBAR
-                                                {' = '}
-                                                <span className="font-bold">
-                                                    {formatHBARNumber((parseFloat(loan.requestedAmount) * (1 + loan.interestRate / 10000)).toString())} HBAR
-                                                </span>
-                                            </p>
-                                        </div>
-                                        <button
-                                            onClick={() => handleRepayLoan(loan.id, loan)}
-                                            disabled={repayingLoans.has(loan.id)}
-                                            className={`w-full btn-primary text-sm py-2 flex items-center justify-center gap-2 ${
-                                                repayingLoans.has(loan.id) 
-                                                    ? 'opacity-50 cursor-not-allowed' 
-                                                    : ''
-                                            }`}
-                                        >
-                                            {repayingLoans.has(loan.id) ? (
-                                                <>
-                                                    <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                                                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                                                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                                                    </svg>
-                                                    Repaying...
-                                                </>
-                                            ) : (
-                                                <>
-                                                    <DollarSign className="w-4 h-4" />
-                                                    Repay Loan ({formatHBARNumber((parseFloat(loan.requestedAmount) * (1 + loan.interestRate / 10000)).toString())} HBAR)
-                                                </>
-                                            )}
-                                        </button>
-                                    </div>
-                                )}
-                                {loan.status === 2 && ( // Status = Repaid
-                                    <div className="mt-4 p-3 bg-green-50 border border-green-200 rounded-lg">
-                                        <div className="flex items-center gap-2">
-                                            <CheckCircle2 className="w-4 h-4 text-green-600" />
-                                            <div>
-                                                <p className="text-xs font-semibold text-green-900">Loan Repaid</p>
-                                                <p className="text-xs text-green-700">Your NFT collateral has been unlocked</p>
-                                            </div>
-                                        </div>
-                                    </div>
-                                )}
                                 {/* Blockchain Verification */}
                                 {loan.isOnChain && loan.txHash && (
-                                    <div className="mt-4 p-3 bg-green-50 border border-green-200 rounded-lg">
+                                    <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg">
                                         <div className="flex items-center justify-between">
                                             <div className="flex items-center gap-2">
                                                 <div className="w-2 h-2 bg-green-500 rounded-full"></div>

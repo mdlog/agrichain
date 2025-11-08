@@ -110,18 +110,15 @@ export default function MyHarvestNFTs({ farmerAddress, onCreateLoan }: MyHarvest
             </div>
 
             <div className="space-y-6">
-                {nfts.map((nft, index) => {
-                    console.log(`🔷 Rendering NFT ${index}:`, nft)
-                    return (
-                        <HarvestNFTCard
-                            key={index}
-                            tokenId={nft.tokenId}
-                            serialNumber={nft.serialNumber}
-                            metadata={nft.metadata}
-                            onCreateLoan={() => handleCreateLoan(nft)}
-                        />
-                    )
-                })}
+                {nfts.map((nft, index) => (
+                    <HarvestNFTCard
+                        key={nft.id || `${nft.tokenId}-${nft.serialNumber}`}
+                        tokenId={nft.tokenId}
+                        serialNumber={nft.serialNumber}
+                        metadata={nft.metadata}
+                        onCreateLoan={() => handleCreateLoan(nft)}
+                    />
+                ))}
             </div>
         </div>
     )

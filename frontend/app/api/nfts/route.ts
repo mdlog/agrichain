@@ -5,6 +5,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { getAllNFTs, getNFTsByFarmer, getNFTCount } from '@/lib/nftDatabase'
+import { safeLogger } from '@/lib/security'
 
 export async function GET(request: NextRequest) {
     try {
@@ -38,11 +39,11 @@ export async function GET(request: NextRequest) {
         })
 
     } catch (error: any) {
-        console.error('Error fetching NFTs:', error)
+        safeLogger.error('Error fetching NFTs:', error)
         return NextResponse.json(
             {
                 success: false,
-                error: error.message || 'Failed to fetch NFTs'
+                error: 'Failed to fetch NFTs'
             },
             { status: 500 }
         )

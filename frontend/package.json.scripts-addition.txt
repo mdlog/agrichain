@@ -1,0 +1,14 @@
+# Add these scripts to your package.json:
+
+"scripts": {
+  "dev": "next dev -p 3004",
+  "dev:clean": "rm -rf .next && next dev -p 3004",
+  "build": "next build",
+  "start": "next start",
+  "lint": "next lint",
+  "clear-cache": "./clear-cache.sh"
+}
+
+# Usage:
+# npm run dev:clean  - Start dev server with clean cache
+# npm run clear-cache - Just clear cache without starting

@@ -1,0 +1,12 @@
+--- a/app/farmer/page.tsx
++++ b/app/farmer/page.tsx
+@@ -27,7 +27,8 @@ interface CreatedLoan {
+ 
+ export default function FarmerDashboard() {
+     const { account, connectWallet, signer, provider } = useWallet()
+-    const [activeTab, setActiveTab] = useState<'create' | 'loans'>('create')
++    const [activeTab, setActiveTab] = useState<'create' | 'loans' | 'nfts'>('create')
++    const [selectedNFTForLoan, setSelectedNFTForLoan] = useState<any>(null)
+     const [isSubmitting, setIsSubmitting] = useState(false)
+     const [blockchainLoans, setBlockchainLoans] = useState<any[]>([])
+     const [farmerName, setFarmerName] = useState('Farmer')
